@@ -8,15 +8,19 @@ export const Route = createFileRoute("/api/public/stripe-webhook")({
         const body = await request.text();
         const secret = process.env.STRIPE_WEBHOOK_SECRET;
 
+        if (!secret) {
+          return new Response("STRIPE_WEBHOOK_SECRET not configured", { status: 500 });
+        }
+
         const Stripe = (await import("stripe")).default;
         const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" as any });
 
         let event: any;
         try {
-          if (secret && sig) {
+          if (sig) {
             event = await stripe.webhooks.constructEventAsync(body, sig, secret);
           } else {
-            event = JSON.parse(body);
+            return new Response("Missing stripe-signature header", { status: 401 });
           }
         } catch (e: any) {
           return new Response(`Invalid signature: ${e.message}`, { status: 400 });

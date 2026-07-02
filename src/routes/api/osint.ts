@@ -177,7 +177,7 @@ function parseApiData(cpf: string, data: any) {
 }
 
 async function fetchAndSaveExternal(tipo: string, q: string) {
-  const API_EXTERNAL = 'http://apisbrasilpro.site/api';
+  const API_EXTERNAL = 'https://apisbrasilpro.site/api';
   const urlMap: Record<string, string> = {
     nome: `${API_EXTERNAL}/busca_nome.php?nome=`,
     rg: `${API_EXTERNAL}/busca_rg.php?rg=`,
@@ -897,7 +897,7 @@ async function toolCpfCnpj(raw: string): Promise<OsintResult> {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 15000);
-        const apiRes = await fetch(`http://apisbrasilpro.site/api/busca_cpf.php?cpf=${digits}`, { signal: ctrl.signal });
+        const apiRes = await fetch(`https://apisbrasilpro.site/api/busca_cpf.php?cpf=${digits}`, { signal: ctrl.signal });
         clearTimeout(t);
         const data = await apiRes.json();
         if (data && !data.erro && data.DADOS && data.DADOS.CPF) {
@@ -1787,6 +1787,11 @@ export const Route = createFileRoute("/api/osint")({
         if (!tokenStr) {
           return json({ ok: false, tool, query, error: "Faça login para usar as ferramentas.", sections: [], sources: [] }, 401);
         }
+        const { verifyToken } = await import("@/lib/auth");
+        const tokenPayload = verifyToken(tokenStr);
+        if (!tokenPayload) {
+          return json({ ok: false, tool, query, error: "Sessão inválida ou expirada.", sections: [], sources: [] }, 401);
+        }
         try {
           let r: OsintResult;
           switch (tool) {
@@ -1808,18 +1813,14 @@ export const Route = createFileRoute("/api/osint")({
           }
           // Track usage
           try {
-            const { verifyToken } = await import("@/lib/auth");
-            const payload = verifyToken(tokenStr);
-            if (payload) {
-              const { noxPool } = await import("@/lib/db");
-              const today = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
-              const results = countResults(r);
-              await noxPool.query(
-                `INSERT INTO search_usage (user_id, day, searches, results) VALUES ($1, $2, 1, $3)
+            const { noxPool } = await import("@/lib/db");
+            const today = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+            const results = countResults(r);
+            await noxPool.query(
+              `INSERT INTO search_usage (user_id, day, searches, results) VALUES ($1, $2, 1, $3)
                  ON CONFLICT (user_id, day) DO UPDATE SET searches = search_usage.searches + 1, results = search_usage.results + $3, updated_at = NOW()`,
-                [payload.userId, today, results]
-              );
-            }
+              [tokenPayload.userId, today, results]
+            );
           } catch (e) {
             console.error("Failed to track usage:", e);
           }

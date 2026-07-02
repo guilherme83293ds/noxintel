@@ -2,7 +2,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { noxPool, ensureDb } from './db';
 
-const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_SECRET_KEY || 'nox-jwt-secret-dev';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 10);
