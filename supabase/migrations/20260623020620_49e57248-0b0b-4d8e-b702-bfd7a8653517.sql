@@ -1,0 +1,1 @@
+REVOKE EXECUTE ON FUNCTION public.payments_restrict_user_update() FROM PUBLIC, anon;

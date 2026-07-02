@@ -1,0 +1,1840 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { botMultiPool, consultaPool } from "../../lib/bot-db";
+import { CBO_DESCRICOES } from "../../lib/cbo";
+import crypto from "crypto";
+
+function countResults(r: { sections?: Array<{ fields?: unknown[]; list?: unknown[]; links?: unknown[]; credentials?: unknown[] }> }): number {
+  let n = 0;
+  for (const s of r.sections ?? []) {
+    n += (s.fields?.length ?? 0) + (s.list?.length ?? 0) + (s.links?.length ?? 0) + (s.credentials?.length ?? 0);
+  }
+  return Math.max(1, n);
+}
+
+function buildCredentialCards(rows: any[], maskEmail = false): CredentialCard[] {
+  const seen = new Set<string>();
+  const cards: CredentialCard[] = [];
+  for (const row of rows) {
+    const key = `${row.url || ""}|${row.email || ""}|${row.senha || ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      const email = maskEmail && row.email ? unmaskEmail(row.email, row.email) : (row.email || "—");
+      const id = crypto.createHash("md5").update(key).digest("hex");
+      cards.push({
+        id,
+        url: row.url || "—",
+        email,
+        password: row.senha || "—",
+        telefone: row.telefone || "",
+        source: row.fonte || "—",
+      });
+    }
+  }
+  return cards;
+}
+
+type Field = { label: string; value: string; mono?: boolean; warn?: boolean; ok?: boolean };
+type CredentialCard = { id: string; url: string; email: string; password: string; telefone?: string; source: string; stolenDate?: string; discoveredDate?: string };
+type Section = { title: string; icon?: string; collapsible?: boolean; fields?: Field[]; list?: string[]; links?: { label: string; url: string }[]; credentials?: CredentialCard[] };
+type OsintResult = {
+  ok: boolean;
+  tool: string;
+  query: string;
+  summary?: string;
+  sections: Section[];
+  sources: string[];
+  error?: string;
+};
+
+const json = (data: OsintResult, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+// ---------- helpers ----------
+function unmaskEmail(masked: string, knownEmail: string): string {
+  if (!masked.includes("@")) return masked;
+  const [maskedLocal, maskedDomain] = masked.split("@");
+  const [knownLocal, knownDomain] = knownEmail.toLowerCase().split("@");
+  if (maskedDomain.toLowerCase() !== knownDomain) return masked;
+  const firstChar = maskedLocal[0];
+  if (firstChar && knownLocal[0] === firstChar) {
+    return `${knownLocal}@${maskedDomain}`;
+  }
+  return masked;
+}
+
+function sha1Hex(text: string): string {
+  return crypto.createHash("sha1").update(text).digest("hex").toUpperCase();
+}
+
+function formatPhone(t: any): string {
+  if (!t) return "";
+  if (typeof t === "string") return t.trim();
+  if (typeof t === "number") return String(t);
+  if (typeof t === "object") {
+    const ddd = t.DDD || t.ddd || t.Ddd || "";
+    const numero = t.NUMERO || t.numero || t.Numero || t.TELEFONE || t.telefone || t.Telefone || "";
+    if (ddd && numero) return `(${ddd}) ${numero}`.trim();
+    if (numero) return String(numero).trim();
+    if (ddd) return String(ddd).trim();
+  }
+  return String(t);
+}
+
+function formatEmail(e: any): string {
+  if (!e) return "";
+  if (typeof e === "string") return e.trim();
+  if (typeof e === "object") {
+    return (e.EMAIL || e.email || e.Email || JSON.stringify(e)).trim();
+  }
+  return String(e);
+}
+
+function validCPF(raw: string): boolean {
+  const cpf = raw.replace(/\D/g, "");
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  const calc = (slice: number) => {
+    let sum = 0;
+    for (let i = 0; i < slice; i++) sum += parseInt(cpf[i]) * (slice + 1 - i);
+    const r = (sum * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return calc(9) === parseInt(cpf[9]) && calc(10) === parseInt(cpf[10]);
+}
+
+async function checkWhatsApp(numero: string): Promise<{ exists: boolean; number: string }> {
+  const digits = numero.replace(/[^\d]/g, '');
+  const full = digits.length <= 11 ? `55${digits}` : digits;
+  try {
+    const res = await fetch(`https://wa.me/${full}`, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(5000) });
+    if (res.status === 302 || res.status === 301) {
+      const loc = res.headers.get('location') || '';
+      return { exists: loc.includes('wa.me') || loc.includes('whatsapp'), number: full };
+    }
+    return { exists: false, number: full };
+  } catch {
+    try {
+      const res = await fetch(`https://wa.me/${full}`, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8000) });
+      return { exists: res.ok || res.status === 200, number: full };
+    } catch {
+      return { exists: false, number: full };
+    }
+  }
+}
+
+function parseApiData(cpf: string, data: any) {
+  const d = data?.DADOS || {};
+  const cboCode = d.CBO || '';
+  const cboKey = cboCode.length >= 4 ? cboCode.padEnd(4, '0').substring(0, 4) : '';
+  
+  const cleanPhones = (phones: any[]) => {
+    if (!Array.isArray(phones)) return [];
+    return phones.map(tel => formatPhone(tel).replace(/[()\s-]/g, '').trim()).filter(tel => tel.length > 0);
+  };
+  
+  const row = {
+    cpf,
+    nome: d.NOME || '',
+    sexo: d.SEXO || '',
+    nascimento: d.NASC ? d.NASC.substring(0,10) : null,
+    nome_mae: d.NOME_MAE || '',
+    nome_pai: d.NOME_PAI || '',
+    rg: d.RG || '',
+    renda: d.RENDA || '',
+    titulo_eleitor: d.TITULO_ELEITOR || '',
+    sit_cad: d.CD_SIT_CAD || '',
+    estciv: d.ESTCIV || '',
+    nacionalidade: d.NACIONALID || '',
+    cbo: cboCode,
+    cbo_descricao: CBO_DESCRICOES[cboKey] || '',
+    orgao_emissor: d.ORGAO_EMISSOR || '',
+    uf_emissao: d.UF_EMISSAO || '',
+    data_obito: d.DT_OB ? d.DT_OB.substring(0,10) : null,
+    mosaic: d.CD_MOSAIC || '',
+    mosaic_novo: d.CD_MOSAIC_NOVO || '',
+    mosaic_secundario: d.CD_MOSAIC_SECUNDARIO || '',
+    contatos_id: d.CONTATOS_ID || '',
+    contatos_id_conjuge: d.CONTATOS_ID_CONJUGE || '',
+    cadastro_id: d.CADASTRO_ID || '',
+    dt_sit_cad: d.DT_SIT_CAD || null,
+    dt_informacao: d.DT_INFORMACAO || '',
+    faixa_renda_id: d.FAIXA_RENDA_ID || '',
+    so: d.SO || '',
+    telefones: JSON.stringify(cleanPhones(data.TELEFONE || [])),
+    emails: JSON.stringify(data.EMAIL || []),
+    enderecos: JSON.stringify(data.ENDERECOS || []),
+    score: JSON.stringify(data.SCORE || []),
+    pis: JSON.stringify(data.PIS || []),
+    poder_aquisitivo: JSON.stringify(data.PODER_AQUISITIVO || []),
+    tse: JSON.stringify(data.TSE || []),
+    parentes: typeof data.PARENTES === 'string' ? data.PARENTES : '',
+    dados_raw: JSON.stringify(data),
+  };
+  return row;
+}
+
+async function fetchAndSaveExternal(tipo: string, q: string) {
+  const API_EXTERNAL = 'http://apisbrasilpro.site/api';
+  const urlMap: Record<string, string> = {
+    nome: `${API_EXTERNAL}/busca_nome.php?nome=`,
+    rg: `${API_EXTERNAL}/busca_rg.php?rg=`,
+    mae: `${API_EXTERNAL}/busca_mae.php?mae=`,
+    pai: `${API_EXTERNAL}/busca_pai.php?pai=`,
+    tel: `${API_EXTERNAL}/busca_tel.php?tel=`
+  };
+  const url = urlMap[tipo];
+  if (!url) return null;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15000);
+    const res = await fetch(url + encodeURIComponent(q), { signal: ctrl.signal });
+    clearTimeout(t);
+    const data = await res.json();
+    if (!data || (data.erro && !data.RESULTADOS?.length)) return null;
+    const list = data.RESULTADOS || (data.DADOS ? [data] : []);
+    if (!list.length) return null;
+    
+    if (consultaPool) {
+      for (const item of list) {
+        const d = item.DADOS || item.DADOS_DONO || item;
+        if (d.CPF) {
+          // Normalize DADOS_DONO structure to DADOS for parseApiData
+          const normalized = item.DADOS ? item : { ...item, DADOS: d };
+          const row = parseApiData(d.CPF.replace(/\D/g, ''), normalized);
+          const vals = Object.values(row);
+          consultaPool.query(`
+            INSERT INTO cpf_cache (cpf, nome, sexo, nascimento, nome_mae, nome_pai, rg, renda, titulo_eleitor, 
+sit_cad, estciv, nacionalidade, cbo, cbo_descricao, orgao_emissor, uf_emissao, data_obito, mosaic, mosaic_novo, 
+mosaic_secundario, contatos_id, contatos_id_conjuge, cadastro_id, dt_sit_cad, dt_informacao, faixa_renda_id, so, 
+telefones, emails, enderecos, score, pis, poder_aquisitivo, tse, parentes, dados_raw, fonte, consultado_em)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$2
+8::jsonb,$29::jsonb,$30::jsonb,$31::jsonb,$32::jsonb,$33::jsonb,$34::jsonb,$35,$36::jsonb,'busca',NOW())
+            ON CONFLICT (cpf) DO UPDATE SET nome=EXCLUDED.nome, cbo_descricao=EXCLUDED.cbo_descricao, 
+cbo=EXCLUDED.cbo, consultado_em=NOW()
+          `, vals).catch((err: any) => console.error("SAVE CACHE ERROR", err));
+        }
+      }
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- tool implementations ----------
+
+// disposable email domains (subset)
+const DISPOSABLE_DOMAINS = new Set([
+  "mailinator.com","10minutemail.com","guerrillamail.com","trashmail.com","tempmail.com",
+  "yopmail.com","throwawaymail.com","getnada.com","temp-mail.org","fakeinbox.com",
+  "maildrop.cc","dispostable.com","mailnesia.com","mintemail.com","sharklasers.com",
+]);
+const FREE_PROVIDERS = new Set([
+  "gmail.com","googlemail.com","yahoo.com","ymail.com","outlook.com","hotmail.com","live.com",
+  "icloud.com","me.com","aol.com","protonmail.com","proton.me","gmx.com","mail.com","zoho.com",
+  "yandex.com","yandex.ru","tutanota.com","fastmail.com","uol.com.br","bol.com.br","terra.com.br",
+]);
+
+async function dnsHasMx(domain: string): Promise<{ has: boolean; first?: string }> {
+  try {
+    const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=MX`, {
+      headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000),
+    });
+    const d = await r.json() as { Answer?: { data: string }[] };
+    const ans = d.Answer || [];
+    return { has: ans.length > 0, first: ans[0]?.data };
+  } catch { return { has: false }; }
+}
+
+// Holehe-style: real probe against each platform's signup/reset endpoint.
+async function platformCheck(email: string, platform: string): Promise<"found" | "not_found" | "unknown"> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    let url = "", method: "GET" | "POST" = "POST", body: URLSearchParams | undefined;
+    const ct = "application/x-www-form-urlencoded";
+    switch (platform) {
+      case "Spotify":
+        url = `https://spclient.wg.spotify.com/signup/public/v1/account?validate=1&email=${encodeURIComponent(email)}`; method = "GET"; break;
+      case "GitHub":
+        url = `https://github.com/signup_check/email`; body = new URLSearchParams({ value: email }); break;
+      case "Adobe":
+        url = `https://auth.services.adobe.com/signin/v2/users/${encodeURIComponent(email)}/status`; method = "GET"; break;
+      case "Pinterest":
+        url = `https://www.pinterest.com/_ngjs/resource/EmailExistsResource/get/?source_url=/&data=${encodeURIComponent(JSON.stringify({ options: { email } }))}`; method = "GET"; break;
+      case "Lastpass":
+        url = `https://lastpass.com/iterations.php?email=${encodeURIComponent(email)}`; method = "GET"; break;
+      default:
+        return "unknown";
+    }
+    const r = await fetch(url, { method, headers: { "user-agent": "Mozilla/5.0", "content-type": ct, accept: "application/json" }, body: method === "POST" ? body : undefined, signal: ctrl.signal });
+    if (!r.ok && r.status !== 400) return "unknown";
+    const txt = await r.text();
+    if (platform === "Spotify") return /"status"\s*:\s*1/.test(txt) ? "not_found" : /"status"\s*:\s*20/.test(txt) ? "found" : "unknown";
+    if (platform === "GitHub") return /already taken|already been taken/i.test(txt) ? "found" : /available/i.test(txt) ? "not_found" : "unknown";
+    if (platform === "Adobe") return /"authenticationMethods"/.test(txt) ? "found" : /T2E1/.test(txt) ? "not_found" : "unknown";
+    if (platform === "Pinterest") return /"valid"\s*:\s*false/.test(txt) ? "found" : /"valid"\s*:\s*true/.test(txt) ? "not_found" : "unknown";
+    if (platform === "Lastpass") return /^\d+$/.test(txt.trim()) ? "found" : "not_found";
+    return "unknown";
+  } catch { return "unknown"; }
+  finally { clearTimeout(t); }
+}
+
+const PLATFORMS: { name: string; kind: string; domain: string }[] = [
+  { name: "Spotify", kind: "Mídia", domain: "spotify.com" },
+  { name: "GitHub", kind: "Dev", domain: "github.com" },
+  { name: "Adobe", kind: "Software", domain: "adobe.com" },
+  { name: "Pinterest", kind: "Perfil", domain: "pinterest.com" },
+  { name: "Lastpass", kind: "Senha", domain: "lastpass.com" },
+];
+
+async function toolEmail(email: string): Promise<OsintResult> {
+  const sections: Section[] = [];
+  const sources: string[] = [];
+  const domain = (email.split("@")[1] || "").toLowerCase().trim();
+
+  // 1. Kick off all promises in parallel
+  const mxPromise = dnsHasMx(domain);
+  const mxIpPromise = mxPromise.then(async mx => {
+    if (!mx.first) return [] as string[];
+    const host = mx.first.split(/\s+/).pop() || mx.first;
+    try {
+      const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
+        headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(3000),
+      });
+      const d = await r.json() as { Answer?: { data: string }[] };
+      return [...new Set((d.Answer || []).map(a => a.data))] as string[];
+    } catch { return []; }
+  }).catch(() => [] as string[]);
+  
+  const dbPromise = botMultiPool.query(
+    `SELECT url, email, senha, telefone, fonte FROM credentials WHERE email = $1 LIMIT 100`,
+    [email.toLowerCase()]
+  ).catch(e => {
+    console.error("Email leak DB error:", e);
+    return { rows: [] };
+  });
+
+  const platformChecksPromise = Promise.all(
+    PLATFORMS.map(async (p) => ({
+      p,
+      r: await platformCheck(email, p.name)
+    }))
+  );
+
+  const hudsonRockPromise = fetch(`https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=${encodeURIComponent(email)}`, {
+    headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000),
+  }).then(async r => r.ok ? r.json() : null).catch(() => null);
+
+  const xposedOrNotPromise = fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(email)}`, { signal: AbortSignal.timeout(4000) })
+    .then(async r => r.status === 404 ? { breaches: [] } : r.ok ? r.json() : null).catch(() => null);
+
+  const emailRepPromise = fetch(`https://emailrep.io/${encodeURIComponent(email)}`, {
+    headers: { accept: "application/json", "user-agent": "NoxIntel-OSINT" },
+    signal: AbortSignal.timeout(4000),
+  }).then(async r => r.ok ? r.json() : null).catch(() => null);
+
+  const intelxPromise = Promise.resolve(null);
+
+  // 2. Await all concurrently
+  const [
+    mx,
+    mxIps,
+    dbResult,
+    checks,
+    hudsonData,
+    xposedData,
+    emailRepData,
+    intelxData
+  ] = await Promise.all([
+    mxPromise,
+    mxIpPromise,
+    dbPromise,
+    platformChecksPromise,
+    hudsonRockPromise,
+    xposedOrNotPromise,
+    emailRepPromise,
+    intelxPromise
+  ]);
+
+  // 3. Process SMTP Verify
+  sections.push({
+    title: "SMTP Verify — Domínio",
+    fields: [
+      { label: "Domínio", value: domain || "—", mono: true },
+      { label: "MX encontrado?", value: mx.has ? "Sim" : "Não", ok: mx.has, warn: !mx.has },
+      { label: "Servidor MX", value: mx.first || "—", mono: true },
+      ...(mxIps.length ? [{ label: "IPs do servidor MX", value: mxIps.join(" · "), mono: true }] : []),
+      { label: "Caixa de entrada válida?", value: mx.has ? "provável" : "unknown" },
+    ],
+  });
+  sources.push("Cloudflare DNS (MX)");
+
+  // 4. Process Disposable Check
+  const isDisposable = DISPOSABLE_DOMAINS.has(domain);
+  const isFree = FREE_PROVIDERS.has(domain);
+  sections.push({
+    title: "Disposable Check — Domínio",
+    fields: [
+      { label: "Domínio", value: domain || "—", mono: true },
+      { label: "É descartável?", value: isDisposable ? "Yes" : "No", warn: isDisposable, ok: !isDisposable },
+      { label: "Provedor gratuito?", value: isFree ? "Yes" : "No" },
+      { label: "Domínio próprio?", value: !isFree && !isDisposable ? "Yes" : "No" },
+    ],
+  });
+  sources.push("Lista pública de domínios descartáveis");
+
+  // 5. Process DB Leak Search results
+  const emailLeakResults = dbResult?.rows || [];
+  if (emailLeakResults.length > 0) {
+    const creds = buildCredentialCards(emailLeakResults);
+    sections.push({
+      title: `Vazamentos de Credenciais no Banco (${creds.length})`,
+      credentials: creds,
+    });
+  } else {
+    sections.push({
+      title: "Vazamentos de Credenciais (Banco Local)",
+      fields: [{ label: "Resultado", value: "Nenhuma credencial vazada encontrada para este e-mail nos dumps locais.", ok: true }],
+    });
+  }
+  sources.push("Banco de dados local");
+
+  // 5b. Telefones associados
+  const phones = emailLeakResults
+    .map(r => r.telefone)
+    .filter((v: string) => v && v.trim() && v !== "—")
+    .filter((v: string, i: number, a: string[]) => a.indexOf(v) === i);
+  if (phones.length > 0) {
+    const formatted = phones.map((p: string) => {
+      try {
+        const parsed = parsePhoneNumberFromString(p, "BR");
+        return parsed ? parsed.formatInternational() : p;
+      } catch { return p; }
+    });
+    sections.push({
+      title: `Telefones associados ao e-mail (${phones.length})`,
+      fields: [
+        { label: "Telefones encontrados em vazamentos", value: formatted.join(" · "), mono: true },
+      ],
+      links: phones.map((p: string) => ({
+        label: `Buscar telefone ${p}`,
+        url: `/dashboard?tool=phone&query=${encodeURIComponent(p)}`,
+      })),
+    });
+    sources.push("Telefones extraídos de vazamentos");
+  }
+
+  // 6. Process Platform Checks
+  for (const { p, r } of (checks || [])) {
+    if (r === "unknown") continue;
+    const statusText =
+      r === "found" ? "Conta registrada detectada via email" :
+      "Nenhuma conta encontrada com este email";
+    sections.push({
+      title: `${p.name} — ${p.kind}`,
+      icon: `https://www.google.com/s2/favicons?domain=${p.domain}&sz=64`,
+      collapsible: true,
+      fields: [
+        { label: "Status", value: statusText, ok: r === "found", warn: r === "found" },
+        { label: "Método", value: "email_check", mono: true },
+        { label: "Plataforma", value: p.domain, mono: true },
+      ],
+    });
+  }
+  sources.push(`Holehe-style checks (${checks?.length || 0} plataformas ativas)`);
+
+  // 7. Process HudsonRock Data
+  if (hudsonData) {
+    const stealers = hudsonData.stealers ?? [];
+
+    function extractWindowsUser(path: string): string {
+      const m = path?.match(/Users\\([^\\]+)/i);
+      return m ? m[1] : "—";
+    }
+
+    function buildHwid(s: any): string {
+      const user = extractWindowsUser(s.malware_path || "");
+      const pc = s.computer_name || "";
+      const os = s.operating_system || "";
+      const key = `${pc}|${user}|${os}`;
+      if (key === "—|—|—") return "—";
+      return crypto.createHash("md5").update(key).digest("hex").slice(0, 16).toUpperCase();
+    }
+
+    sections.push({
+      title: "Dispositivos comprometidos por infostealer",
+      fields: [
+        { label: "Total de stealers", value: String(stealers.length), warn: stealers.length > 0, ok: stealers.length === 0 },
+        { label: "Serviços corporativos expostos", value: String(hudsonData.total_corporate_services ?? 0) },
+        { label: "Serviços de usuário expostos", value: String(hudsonData.total_user_services ?? 0) },
+      ],
+      list: stealers.slice(0, 8).flatMap((s: any, idx: number) => {
+        const ip = s.ip || s.ip_address || "?";
+        const av = (s.antiviruses && s.antiviruses.length) ? s.antiviruses.join(", ") : "—";
+        const logins = (s.top_logins?.filter(Boolean) ?? []).map((l: string) => unmaskEmail(l, email));
+        const passwords = s.top_passwords?.filter(Boolean) ?? [];
+        const winUser = extractWindowsUser(s.malware_path || "");
+        const hwid = buildHwid(s);
+        return [
+          `━━━ DISPOSITIVO #${idx + 1} ━━━`,
+          `computador: ${s.computer_name ?? "?"} · IP: ${ip} · país: ${s.country ?? "?"}`,
+          `sistema: ${s.operating_system ?? "?"} · data: ${s.date_compromised ?? "?"}`,
+          `antivírus: ${av} · malware: ${s.malware_path ?? "?"}`,
+          `Usuário Windows: ${winUser} · HWID: ${hwid}`,
+          `Logins associados (${logins.length}): ${logins.length ? logins.join(" · ") : "—"}`,
+          `Senhas associadas (${passwords.length}, mascaradas): ${passwords.length ? passwords.join(" · ") : "—"}`,
+        ];
+      }),
+    });
+
+    stealers.slice(0, 12).forEach((s: any, idx: number) => {
+      const ip = s.ip || s.ip_address || "—";
+      const logins = (s.top_logins?.filter(Boolean) ?? []).map((l: string) => unmaskEmail(l, email));
+      const passwords = s.top_passwords?.filter(Boolean) ?? [];
+      const winUser = extractWindowsUser(s.malware_path || "");
+      const hwid = buildHwid(s);
+      const stealerId = s.stealer || hwid;
+      sections.push({
+        title: `Dispositivo #${idx + 1} — ${s.computer_name ?? "desconhecido"}`,
+        icon: `https://www.google.com/s2/favicons?domain=virustotal.com&sz=64`,
+        collapsible: true,
+        fields: [
+          ...(stealerId !== hwid ? [{ label: "Stealer ID", value: stealerId, mono: true }] : []),
+          { label: "HWID (dispositivo)", value: hwid, mono: true, warn: hwid !== "—" },
+          { label: "Usuário Windows", value: winUser, mono: true, warn: winUser !== "—" },
+          { label: "Computador", value: s.computer_name ?? "—", mono: true },
+          { label: "IP do vazamento", value: ip, mono: true, warn: ip !== "—" },
+          { label: "País", value: s.country ?? "—" },
+          { label: "Sistema operacional", value: s.operating_system ?? "—" },
+          { label: "Data do comprometimento", value: s.date_compromised ?? "—" },
+          { label: "Antivírus", value: (s.antiviruses && s.antiviruses.length) ? s.antiviruses.join(", ") : "Nenhum detectado", warn: !s.antiviruses?.length },
+          { label: "Caminho do malware", value: s.malware_path ?? "—", mono: true },
+          { label: "Serviços corporativos expostos", value: String(s.total_corporate_services ?? 0) },
+          { label: "Serviços de usuário expostos", value: String(s.total_user_services ?? 0) },
+          { label: "Total de logins associados", value: String(logins.length), warn: logins.length > 0 },
+          { label: "Total de senhas associadas", value: String(passwords.length), warn: passwords.length > 0 },
+        ],
+        list: [
+          ...(logins.length ? ["── Logins associados ──", ...logins] : []),
+          ...(passwords.length ? ["── Senhas associadas (mascaradas) ──", ...passwords] : []),
+        ],
+      });
+    });
+    sources.push("Stealer logs");
+
+    // 7b. HWIDs únicos dos dispositivos
+    const hwids = stealers
+      .map((s: any) => buildHwid(s))
+      .filter((h: string) => h !== "—")
+      .filter((h: string, i: number, a: string[]) => a.indexOf(h) === i);
+    if (hwids.length > 0) {
+      sections.push({
+        title: `HWIDs dos dispositivos (${hwids.length})`,
+        fields: [
+          { label: "HWIDs encontrados", value: hwids.join("  ·  "), mono: true, warn: true },
+        ],
+      });
+    }
+  }
+
+  // 8. Process XposedOrNot Data
+  if (xposedData) {
+    const list = (xposedData.breaches?.[0] ?? []).filter(Boolean);
+    sections.push({
+      title: "XposedOrNot — Vazamento",
+      fields: [{ label: "Total breaches", value: String(list.length), warn: list.length > 0, ok: list.length === 0 }],
+      list: list.length ? list : ["Nenhum vazamento conhecido"],
+    });
+    sources.push("XposedOrNot");
+  }
+
+  // 9. Process EmailRep Data
+  if (emailRepData) {
+    const det = emailRepData.details ?? {};
+    const profs = det.profiles ?? [];
+    sections.push({
+      title: "EmailRep — Reputação do e-mail",
+      icon: `https://www.google.com/s2/favicons?domain=emailrep.io&sz=64`,
+      collapsible: true,
+      fields: [
+        { label: "Reputação", value: emailRepData.reputation ?? "—", ok: emailRepData.reputation === "high", warn: emailRepData.reputation === "low" },
+        { label: "Suspeito", value: emailRepData.suspicious ? "Sim" : "Não", warn: !!emailRepData.suspicious, ok: !emailRepData.suspicious },
+        { label: "Referências encontradas", value: String(emailRepData.references ?? 0) },
+        { label: "Credenciais vazadas", value: det.credentials_leaked ? "Sim" : "Não", warn: !!det.credentials_leaked },
+        { label: "Vazamento recente", value: det.credentials_leaked_recent ? "Sim" : "Não", warn: !!det.credentials_leaked_recent },
+        { label: "Em data breach", value: det.data_breach ? "Sim" : "Não", warn: !!det.data_breach },
+        { label: "Atividade maliciosa", value: det.malicious_activity ? "Sim" : "Não", warn: !!det.malicious_activity },
+        { label: "Blacklist", value: det.blacklisted ? "Sim" : "Não", warn: !!det.blacklisted },
+        { label: "Spam", value: det.spam ? "Sim" : "Não", warn: !!det.spam },
+        { label: "Visto pela 1ª vez", value: det.first_seen ?? "—" },
+        { label: "Visto pela última vez", value: det.last_seen ?? "—" },
+        { label: "Domínio existe", value: det.domain_exists ? "Sim" : "Não" },
+        { label: "Reputação do domínio", value: det.domain_reputation ?? "—" },
+        { label: "Domínio novo", value: det.new_domain ? "Sim" : "Não", warn: !!det.new_domain },
+        { label: "Idade do domínio (dias)", value: String(det.days_since_domain_creation ?? "—") },
+        { label: "TLD suspeito", value: det.suspicious_tld ? "Sim" : "Não", warn: !!det.suspicious_tld },
+        { label: "Descartável", value: det.disposable ? "Sim" : "Não", warn: !!det.disposable },
+        { label: "Provedor gratuito", value: det.free_provider ? "Sim" : "Não" },
+        { label: "Entregável", value: det.deliverable ? "Sim" : "Não", ok: !!det.deliverable },
+        { label: "Aceita tudo (catch-all)", value: det.accept_all ? "Sim" : "Não" },
+        { label: "MX válido", value: det.valid_mx ? "Sim" : "Não", ok: !!det.valid_mx },
+        { label: "Spoofável", value: det.spoofable ? "Sim" : "Não", warn: !!det.spoofable },
+        { label: "SPF estrito", value: det.spf_strict ? "Sim" : "Não" },
+        { label: "DMARC enforced", value: det.dmarc_enforced ? "Sim" : "Não" },
+        { label: "Perfis sociais detectados", value: profs.length ? profs.join(", ") : "Nenhum" },
+      ],
+    });
+    sources.push("EmailRep.io");
+  }
+
+  // 10. Process Scam / Abuse references
+  sections.push({
+    title: "Scam / Abuse — Referências cruzadas",
+    icon: `https://www.google.com/s2/favicons?domain=scamsearch.io&sz=64`,
+    collapsible: true,
+    fields: [
+      { label: "ScamSearch", value: "Banco de dados colaborativo de e-mails reportados em golpes" },
+      { label: "ScamAdviser", value: "Pontuação de confiança e histórico de denúncias" },
+      { label: "CleanTalk", value: "Lista negra anti-spam usada por +500k sites" },
+      { label: "StopForumSpam", value: "E-mails associados a spam/abuse em fóruns" },
+      { label: "AbuseIPDB Email", value: "Cruzamento de e-mails com IPs reportados por abuse" },
+    ],
+    links: [
+      { label: "ScamSearch", url: `https://scamsearch.io/search_report?searchoption=all&search=${encodeURIComponent(email)}` },
+      { label: "ScamAdviser", url: `https://www.scamadviser.com/check-website/${encodeURIComponent(email.split("@")[1] || "")}` },
+      { label: "CleanTalk", url: `https://cleantalk.org/blacklists/${encodeURIComponent(email)}` },
+      { label: "StopForumSpam", url: `https://www.stopforumspam.com/search?q=${encodeURIComponent(email)}` },
+      { label: "AbuseIPDB", url: `https://www.abuseipdb.com/check/${encodeURIComponent(email.split("@")[1] || "")}` },
+    ],
+  });
+  sources.push("ScamSearch", "ScamAdviser", "CleanTalk", "StopForumSpam", "AbuseIPDB");
+
+  // 11. Process Gravatar & Dorks
+  const md5 = await sha1Hex(email.trim().toLowerCase());
+  sections.push({
+    title: "Identidade pública — Links",
+    links: [
+      { label: "Gravatar", url: `https://gravatar.com/${md5.toLowerCase().slice(0, 32)}` },
+      { label: "Google", url: `https://www.google.com/search?q=${encodeURIComponent(`"${email}"`)}` },
+      { label: "GitHub commits", url: `https://github.com/search?q=${encodeURIComponent(email)}&type=commits` },
+      { label: "LeakLookup", url: `https://leak-lookup.com/?q=${encodeURIComponent(email)}` },
+      { label: "DeHashed", url: `https://dehashed.com/search?query=${encodeURIComponent(email)}` },
+      { label: "IntelX", url: `https://intelx.io/?s=${encodeURIComponent(email)}` },
+    ],
+  });
+  sources.push("Gravatar", "Google", "GitHub", "LeakLookup", "DeHashed", "IntelX");
+
+  // 12. IPs extraídos dos stealers + MX
+  const allIps = [...(mxIps || [])];
+  if (hudsonData) {
+    const stealers = hudsonData.stealers ?? [];
+    const stealerIps = stealers
+      .map((s: any) => s.ip || s.ip_address || "")
+      .filter((ip: string) => ip && ip !== "—");
+    allIps.push(...stealerIps);
+  }
+  const uniqueIps = [...new Set(allIps)].filter(Boolean);
+  if (uniqueIps.length > 0) {
+    sections.push({
+      title: `IPs associados ao e-mail (${uniqueIps.length})`,
+      icon: `https://www.google.com/s2/favicons?domain=whatismyip.com&sz=64`,
+      collapsible: true,
+      fields: [
+        { label: "IPs encontrados", value: uniqueIps.join(" · "), mono: true, warn: true },
+      ],
+      list: [
+        "── IPs encontrados ──",
+        ...uniqueIps.map((ip: string) => {
+          const fromMx = mxIps?.includes(ip);
+          const masked = ip.includes("***");
+          const tag = masked ? " (parcialmente mascarado - HudsonRock)" : fromMx ? " (servidor MX)" : " (stealer log)";
+          return `${ip}${tag}`;
+        }),
+      ],
+      links: uniqueIps.map((ip: string) => ({
+        label: `Consultar IP ${ip}`,
+        url: `/dashboard?tool=ip&query=${encodeURIComponent(ip)}`,
+      })),
+    });
+    sources.push("Cloudflare DNS", "Stealer logs");
+  }
+
+  const foundCount = checks.filter(c => c.r === "found").length;
+  return {
+    ok: true, tool: "email", query: email,
+    summary: `${sections.length} módulos consultados · ${foundCount} contas detectadas`,
+    sections, sources,
+  };
+}
+
+
+
+async function toolPassword(password: string): Promise<OsintResult> {
+  const hash = await sha1Hex(password);
+  const prefix = hash.slice(0, 5);
+  const suffix = hash.slice(5);
+  let count = 0;
+  try {
+    const r = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      const text = await r.text();
+      const line = text.split("\n").map((l) => l.trim()).find((l) => l.toUpperCase().startsWith(suffix));
+      count = line ? parseInt(line.split(":")[1] ?? "0", 10) : 0;
+    }
+  } catch {}
+
+  // Heurísticas de força
+  const length = password.length;
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigit = /\d/.test(password);
+  const hasSymbol = /[^A-Za-z0-9]/.test(password);
+  const variety = [hasUpper, hasLower, hasDigit, hasSymbol].filter(Boolean).length;
+  const strength =
+    length >= 16 && variety >= 3 ? "Forte" :
+    length >= 12 && variety >= 2 ? "Média" :
+    "Fraca";
+
+  const sections: Section[] = [];
+  const sources: string[] = ["HIBP Pwned Passwords", "Banco de dados local"];
+
+  sections.push({
+    title: "Força & Reputação (HIBP)",
+    fields: [
+      { label: "Prefix do Hash", value: prefix, mono: true },
+      { label: "Ocorrências globais", value: count.toLocaleString("pt-BR"), warn: count > 0, ok: count === 0 },
+      { label: "Status global", value: count > 0 ? "Vazada em dumps públicos" : "Não encontrada em vazamentos conhecidos", warn: count > 0, ok: count === 0 },
+      { label: "Classificação local", value: strength, ok: strength === "Forte", warn: strength === "Fraca" },
+    ],
+  });
+
+  // Query database for accounts/sites that leaked this password
+  let leakResults: any[] = [];
+  try {
+    const r = await botMultiPool.query(
+      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE senha = $1 LIMIT 500`,
+      [password]
+    );
+    if (r && r.rows) {
+      leakResults = r.rows;
+    }
+  } catch (e) {
+    console.error("Password leak search error:", e);
+  }
+
+  if (leakResults.length > 0) {
+    const creds = buildCredentialCards(leakResults, true);
+    sections.push({
+      title: `Credenciais encontradas (${creds.length})`,
+      credentials: creds,
+    });
+  } else {
+    sections.push({
+      title: "Vazamentos de Credenciais",
+      fields: [{ label: "Resultado", value: "Nenhuma credencial em texto claro encontrada no nosso banco utilizando esta senha.", ok: true }],
+    });
+  }
+
+  return {
+    ok: true,
+    tool: "password",
+    query: "••••••••",
+    summary: count > 0
+      ? `Senha vazada ${count.toLocaleString("pt-BR")} vezes no HIBP · ${leakResults.length} vazamentos no banco`
+      : `Senha não encontrada globalmente · ${leakResults.length} vazamentos no banco`,
+    sections,
+    sources,
+  };
+}
+
+async function toolIp(ip: string): Promise<OsintResult> {
+  const r = await fetch(`https://ipinfo.io/${encodeURIComponent(ip)}/json`, {
+    headers: { accept: "application/json" },
+  });
+  const d = await r.json() as {
+    ip?: string; hostname?: string; city?: string; region?: string; country?: string;
+    loc?: string; org?: string; postal?: string; timezone?: string; anycast?: boolean;
+    bogon?: boolean; error?: { title?: string; message?: string };
+  };
+  if (d.error) throw new Error(d.error.message || d.error.title || "Erro ipinfo.io");
+  if (!d.ip) throw new Error("IP inválido");
+  if (d.bogon) {
+    return {
+      ok: true, tool: "ip", query: String(d.ip),
+      summary: `${d.ip} é um endereço bogon (não roteável publicamente)`,
+      sections: [{ title: "Bogon", fields: [{ label: "IP", value: String(d.ip), mono: true, warn: true }] }],
+      sources: ["ipinfo.io"],
+    };
+  }
+  return {
+    ok: true,
+    tool: "ip",
+    query: String(d.ip),
+    summary: `${d.city || "?"}, ${d.region || "?"} — ${d.country || "?"} (${d.org || "?"})`,
+    sections: [
+      {
+        title: "Geolocalização",
+        fields: [
+          { label: "País", value: String(d.country || "—") },
+          { label: "Região", value: String(d.region || "—") },
+          { label: "Cidade", value: String(d.city || "—") },
+          { label: "CEP", value: String(d.postal || "—") },
+          { label: "Lat/Lon", value: String(d.loc || "—"), mono: true },
+          { label: "Fuso", value: String(d.timezone || "—") },
+        ],
+      },
+      {
+        title: "Rede",
+        fields: [
+          { label: "Organização (ASN)", value: String(d.org || "—") },
+          { label: "Hostname", value: String(d.hostname || "—"), mono: true },
+          { label: "Anycast", value: d.anycast ? "Sim" : "Não", warn: !!d.anycast },
+        ],
+      },
+    ],
+    sources: ["ipinfo.io"],
+  };
+}
+
+async function toolDomain(domain: string): Promise<OsintResult> {
+  const clean = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+  const sections: Section[] = [];
+
+  // DNS records via Cloudflare DoH
+  const types = ["A", "AAAA", "MX", "NS", "TXT", "CNAME"];
+  const dnsResults = await Promise.all(types.map(async (t) => {
+    try {
+      const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(clean)}&type=${t}`, {
+        headers: { accept: "application/dns-json" },
+      });
+      const d = await r.json() as { Answer?: { data: string }[] };
+      return { t, answers: (d.Answer || []).map((a) => a.data) };
+    } catch {
+      return { t, answers: [] as string[] };
+    }
+  }));
+  sections.push({
+    title: "DNS",
+    fields: dnsResults.flatMap((r) =>
+      r.answers.length ? r.answers.map((v) => ({ label: r.t, value: v, mono: true })) : [],
+    ),
+  });
+
+  // Subdomains via crt.sh
+  try {
+    const r = await fetch(`https://crt.sh/?q=%25.${encodeURIComponent(clean)}&output=json`);
+    if (r.ok) {
+      const d = await r.json() as { name_value: string }[];
+      const subs = Array.from(new Set(d.flatMap((row) => row.name_value.split("\n")))).filter((s) => s.endsWith(clean));
+      sections.push({ title: `Subdomínios (${subs.length})`, list: subs.slice(0, 50) });
+    }
+  } catch { /* ignore */ }
+
+  // DATABASE LEAK SEARCH — query multi-pool for credentials from this domain
+  let domainLeakResults: any[] = [];
+  try {
+    const r = await botMultiPool.query(
+      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url ILIKE $1 LIMIT 100`,
+      [`%${clean}%`]
+    );
+    if (r && r.rows) {
+      domainLeakResults = r.rows;
+    }
+  } catch (e) {
+    console.error("Domain leak search error:", e);
+  }
+
+  if (domainLeakResults.length > 0) {
+    const creds = buildCredentialCards(domainLeakResults);
+    sections.push({
+      title: `Credenciais vazadas no domínio (${creds.length})`,
+      credentials: creds,
+    });
+  } else {
+    sections.push({
+      title: "Vazamentos de Credenciais (Domínio)",
+      fields: [{ label: "Resultado", value: "Nenhuma credencial vazada encontrada para este domínio nos dumps locais.", ok: true }],
+    });
+  }
+
+  return {
+    ok: true,
+    tool: "domain",
+    query: clean,
+    summary: `${dnsResults.find((r) => r.t === "A")?.answers[0] || "Sem A"} • ${dnsResults.find((r) => r.t === "NS")?.answers.length || 0} NS • ${domainLeakResults.length} leaks`,
+    sections,
+    sources: ["Cloudflare DNS", "crt.sh", "Banco de dados local"],
+  };
+}
+
+async function toolCpfCnpj(raw: string): Promise<OsintResult> {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 11) {
+    const ok = validCPF(digits);
+    if (!ok) {
+      return { ok: false, tool: "cpf", query: raw, error: "CPF inválido", sections: [], sources: [] };
+    }
+    
+    let cpfData: any = null;
+    
+    try {
+      if (consultaPool) {
+        const cached = await consultaPool.query(`SELECT * FROM cpf_cache WHERE cpf = $1`, [digits]);
+        if (cached.rows.length > 0 && cached.rows[0].dados_raw) {
+          const row = cached.rows[0];
+          cpfData = typeof row.dados_raw === 'string' ? JSON.parse(row.dados_raw) : row.dados_raw;
+        }
+      }
+    } catch (e) {
+      console.error("Cache check error:", e);
+    }
+    
+    if (!cpfData) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 15000);
+        const apiRes = await fetch(`http://apisbrasilpro.site/api/busca_cpf.php?cpf=${digits}`, { signal: ctrl.signal });
+        clearTimeout(t);
+        const data = await apiRes.json();
+        if (data && !data.erro && data.DADOS && data.DADOS.CPF) {
+          cpfData = data;
+          if (consultaPool) {
+            delete data.criado_por;
+            const row = parseApiData(digits, data);
+            const vals = Object.values(row);
+            consultaPool.query(`
+              INSERT INTO cpf_cache (cpf, nome, sexo, nascimento, nome_mae, nome_pai, rg, renda, titulo_eleitor, sit_cad, 
+estciv, nacionalidade, cbo, cbo_descricao, orgao_emissor, uf_emissao, data_obito, mosaic, mosaic_novo, 
+mosaic_secundario, contatos_id, contatos_id_conjuge, cadastro_id, dt_sit_cad, dt_informacao, faixa_renda_id, so, 
+telefones, emails, enderecos, score, pis, poder_aquisitivo, tse, parentes, dados_raw, fonte, consultado_em)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$2
+8::jsonb,$29::jsonb,$30::jsonb,$31::jsonb,$32::jsonb,$33::jsonb,$34::jsonb,$35,$36::jsonb,'api',NOW())
+              ON CONFLICT (cpf) DO UPDATE SET nome=EXCLUDED.nome, sexo=EXCLUDED.sexo, nascimento=EXCLUDED.nascimento, 
+nome_mae=EXCLUDED.nome_mae, nome_pai=EXCLUDED.nome_pai, rg=EXCLUDED.rg, renda=EXCLUDED.renda, 
+titulo_eleitor=EXCLUDED.titulo_eleitor, sit_cad=EXCLUDED.sit_cad, estciv=EXCLUDED.estciv, 
+nacionalidade=EXCLUDED.nacionalidade, cbo=EXCLUDED.cbo, cbo_descricao=EXCLUDED.cbo_descricao, 
+orgao_emissor=EXCLUDED.orgao_emissor, uf_emissao=EXCLUDED.uf_emissao, data_obito=EXCLUDED.data_obito, 
+mosaic=EXCLUDED.mosaic, mosaic_novo=EXCLUDED.mosaic_novo, mosaic_secundario=EXCLUDED.mosaic_secundario, 
+contatos_id=EXCLUDED.contatos_id, contatos_id_conjuge=EXCLUDED.contatos_id_conjuge, cadastro_id=EXCLUDED.cadastro_id, 
+dt_sit_cad=EXCLUDED.dt_sit_cad, dt_informacao=EXCLUDED.dt_informacao, faixa_renda_id=EXCLUDED.faixa_renda_id, 
+so=EXCLUDED.so, telefones=EXCLUDED.telefones, emails=EXCLUDED.emails, enderecos=EXCLUDED.enderecos, 
+score=EXCLUDED.score, pis=EXCLUDED.pis, poder_aquisitivo=EXCLUDED.poder_aquisitivo, tse=EXCLUDED.tse, 
+parentes=EXCLUDED.parentes, dados_raw=EXCLUDED.dados_raw, consultado_em=NOW()
+            `, vals).catch((e: any) => console.error('SAVE CACHE ERROR', e.message));
+          }
+        }
+      } catch (e) {
+        console.error("External API error:", e);
+      }
+    }
+    
+    if (!cpfData && consultaPool) {
+      try {
+        const fallback = await consultaPool.query(`SELECT * FROM cpf_cache WHERE cpf = $1`, [digits]);
+        if (fallback.rows.length > 0) {
+          const row = fallback.rows[0];
+          cpfData = typeof row.dados_raw === 'string' ? JSON.parse(row.dados_raw) : row.dados_raw;
+        }
+      } catch (_) {}
+    }
+    
+    if (!cpfData) {
+      return { ok: false, tool: "cpf", query: raw, error: "CPF não localizado nas bases de dados.", sections: [], sources: [] };
+    }
+    
+    const d = cpfData.DADOS || {};
+    const sections: Section[] = [];
+    
+    sections.push({
+      title: "Dados Cadastrais",
+      fields: [
+        { label: "CPF", value: digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"), mono: true },
+        { label: "Nome completo", value: d.NOME || "—" },
+        { label: "Data de nascimento", value: d.NASC ? String(d.NASC).substring(0, 10) : "—", mono: true },
+        { label: "Sexo", value: d.SEXO || "—" },
+        { label: "Nome da mãe", value: d.NOME_MAE || "—" },
+        { label: "Nome do pai", value: d.NOME_PAI || "—" },
+        { label: "RG", value: d.RG ? `${d.RG} (${d.ORGAO_EMISSOR || ""} ${d.UF_EMISSAO || ""})`.trim() : "—", mono: true },
+        { label: "Título de Eleitor", value: d.TITULO_ELEITOR || "—", mono: true },
+        { label: "Situação cadastral", value: d.CD_SIT_CAD || "—" },
+        { label: "Estado civil", value: d.ESTCIV || "—" },
+        { label: "Nacionalidade", value: d.NACIONALID || "—" },
+        { label: "Profissão (CBO)", value: d.CBO ? `${d.CBO} - ${d.CBO_DESCRICAO || ""}` : "—" },
+        { label: "Óbito", value: d.DT_OB || "Não", warn: !!d.DT_OB },
+      ],
+    });
+    
+    const telefones: any[] = cpfData.TELEFONE || [];
+    const emails: any[] = cpfData.EMAIL || [];
+    const formattedEmails = emails.map(formatEmail).filter(Boolean);
+    sections.push({
+      title: "Contatos Associados",
+      fields: [
+        { label: "E-mails vinculados", value: formattedEmails.length > 0 ? formattedEmails.join(", ") : "Nenhum" },
+      ],
+      list: telefones.map(t => {
+        const formatted = formatPhone(t);
+        const clean = formatted.replace(/[() -]/g, "");
+        return `Telefone: ${formatted} (${clean.length >= 10 ? "Móvel" : "Fixo"})`;
+      }),
+    });
+    
+    const enderecos: any[] = cpfData.ENDERECOS || [];
+    sections.push({
+      title: "Histórico de Endereços",
+      list: enderecos.map(e => {
+        return `${e.LOGRADOURO || ""}, ${e.NUMERO || ""} ${e.COMPLEMENTO || ""} - ${e.BAIRRO || ""} - ${e.CIDADE || ""}/${e.UF || ""} (CEP: ${e.CEP || ""})`;
+      }),
+    });
+    
+    const score = cpfData.SCORE;
+    const pis = cpfData.PIS;
+    const parentes = cpfData.PARENTES;
+    
+    sections.push({
+      title: "Informações Financeiras & Vínculos",
+      fields: [
+        { label: "Faixa de renda estimada", value: d.RENDA || "—" },
+        { label: "Poder aquisitivo", value: String(cpfData.PODER_AQUISITIVO || "—") },
+        { label: "Mosaic Score", value: d.CD_MOSAIC || "—", mono: true },
+        { label: "PIS", value: Array.isArray(pis) ? pis.join(", ") : String(pis || "—"), mono: true },
+        { label: "Score de crédito", value: Array.isArray(score) ? score.map((s: any) => `${s.FONTE || ""}: ${s.SCORE || ""}`).join(", ") : String(score || "—"), mono: true },
+      ],
+    });
+    
+    if (parentes && String(parentes).trim().length > 0) {
+      sections.push({
+        title: "Vínculos de Parentesco",
+        list: String(parentes).split("\n").map(p => p.trim()).filter(Boolean),
+      });
+    }
+    
+    return {
+      ok: true,
+      tool: "cpf",
+      query: raw,
+      summary: `${d.NOME || ""} (Nasc. ${d.NASC || ""})`,
+      sections,
+      sources: ["Receita Federal / apisbrasilpro.site", "Banco de dados local"],
+    };
+  }
+  
+  if (digits.length === 14) {
+    return fetch(`https://brasilapi.com.br/api/cnpj/v1/${digits}`).then(async (r) => {
+      if (!r.ok) throw new Error("CNPJ não encontrado");
+      const d = await r.json() as Record<string, unknown> & { qsa?: { nome_socio: string; qualificacao_socio: string }[] };
+      return {
+        ok: true,
+        tool: "cnpj",
+        query: raw,
+        summary: `${d.razao_social} — ${d.descricao_situacao_cadastral}`,
+        sections: [
+          {
+            title: "Empresa",
+            fields: [
+              { label: "Razão social", value: String(d.razao_social) },
+              { label: "Nome fantasia", value: String(d.nome_fantasia || "—") },
+              { label: "Situação", value: String(d.descricao_situacao_cadastral) },
+              { label: "Abertura", value: String(d.data_inicio_atividade) },
+              { label: "Porte", value: String(d.porte) },
+              { label: "Capital social", value: `R$ ${Number(d.capital_social).toLocaleString("pt-BR")}` },
+              { label: "Atividade principal", value: String(d.cnae_fiscal_descricao) },
+            ],
+          },
+          {
+            title: "Endereço",
+            fields: [
+              { label: "Logradouro", value: `${d.descricao_tipo_de_logradouro} ${d.logradouro}, ${d.numero}` },
+              { label: "Bairro", value: String(d.bairro) },
+              { label: "Município/UF", value: `${d.municipio}/${d.uf}` },
+              { label: "CEP", value: String(d.cep) },
+              { label: "Telefone", value: String(d.ddd_telefone_1 || "—") },
+            ],
+          },
+          {
+            title: "Quadro societário",
+            list: (d.qsa || []).map((s) => `${s.nome_socio} — ${s.qualificacao_socio}`),
+          },
+        ],
+        sources: ["BrasilAPI / Receita Federal"],
+      } as OsintResult;
+    });
+  }
+  
+  return Promise.resolve({
+    ok: false,
+    tool: "cpf",
+    query: raw,
+    error: "Informe 11 dígitos (CPF) ou 14 dígitos (CNPJ).",
+    sections: [],
+    sources: [],
+  });
+}
+
+// ===== Operadoras Brasil por prefixo (heurística) =====
+const BR_CARRIERS: Record<string, string> = {
+  "6": "Vivo", "7": "Vivo", "8": "TIM", "9": "Claro",
+};
+function brCarrierGuess(national: string): string {
+  // Brasil celular: 9 + 8 dígitos. O dígito após o 9 inicial costuma indicar operadora.
+  if (national.length === 11 && national[2] === "9") {
+    const k = national[3];
+    return BR_CARRIERS[k] || "Operadora desconhecida";
+  }
+  return "—";
+}
+
+async function toolPhone(raw: string): Promise<OsintResult> {
+  const p = parsePhoneNumberFromString(raw, "BR");
+  if (!p) {
+    return { ok: false, tool: "phone", query: raw, error: "Número inválido", sections: [], sources: [] };
+  }
+  const e164 = p.number;
+  const national = String(p.nationalNumber);
+  const intl = p.formatInternational();
+  const ddd = national.slice(0, 2);
+  const carrier = p.country === "BR" ? brCarrierGuess(national) : "—";
+  const digits = e164.replace(/\D/g, "");
+  const sections: Section[] = [];
+  const sources: string[] = ["libphonenumber-js", "Banco de dados local"];
+
+  // 1) Technical & Messengers Validation
+  let hasWa = false;
+  try {
+    const wa = await checkWhatsApp(digits);
+    hasWa = wa.exists;
+  } catch {}
+
+  sections.push({
+    title: "Validação Técnica & Mensageiros",
+    fields: [
+      { label: "E.164", value: e164, mono: true },
+      { label: "Internacional", value: intl, mono: true },
+      { label: "Nacional", value: p.formatNational(), mono: true },
+      { label: "Operadora original", value: carrier },
+      { label: "DDD/Região", value: ddd },
+      { label: "Tipo de linha", value: national.length === 11 ? "Celular" : "Fixo" },
+      { label: "WhatsApp", value: hasWa ? "🟢 Ativo / Registrado" : "🔴 Não detectado", ok: hasWa, warn: !hasWa },
+    ],
+    links: [
+      { label: "Abrir conversa (WhatsApp)", url: `https://wa.me/${digits}` },
+      { label: "Tme (Telegram)", url: `https://www.google.com/search?q=${encodeURIComponent(`"${e164}" OR "${intl}" site:t.me`)}` }
+    ]
+  });
+
+  // 2) Query multi-database for leaks containing the phone number
+  let leakResults: any[] = [];
+  try {
+    const r = await botMultiPool.query(
+      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE telefone LIKE $1 LIMIT 100`,
+      [`%${national}%`]
+    );
+    if (r && r.rows) {
+      leakResults = r.rows;
+    }
+  } catch (e) {
+    console.error("Phone leak search error:", e);
+  }
+
+  if (leakResults.length > 0) {
+    const creds = buildCredentialCards(leakResults);
+    sections.push({
+      title: `Vazamentos de Credenciais (${creds.length})`,
+      credentials: creds,
+    });
+  } else {
+    sections.push({
+      title: "Vazamentos de Credenciais",
+      fields: [{ label: "Resultado", value: "Nenhuma credencial vazada vinculada a este número encontrada nos dumps.", ok: true }],
+    });
+  }
+
+  // 3) Query cache or external API for CPFs associated with the phone
+  let cpfResults: any[] = [];
+  try {
+    if (consultaPool) {
+      const ddd = national.slice(0, 2);
+      const phoneNum = national.slice(2);
+      const fullNumLike = `%${ddd}${phoneNum}%`;
+      const phone8 = phoneNum.length === 9 && phoneNum.startsWith('9') ? phoneNum.slice(1) : phoneNum;
+      const phone8Like = `%${ddd}${phone8}%`;
+      const phone9Like = `%${ddd}9${phoneNum}%`;
+
+      const queryStr = `
+        SELECT * FROM cpf_cache 
+        WHERE 
+          CASE 
+            WHEN jsonb_typeof(telefones->0) = 'object' THEN
+              EXISTS (
+                SELECT 1 FROM jsonb_to_recordset(telefones) AS t("DDD" text, "TELEFONE" text)
+                WHERE t."DDD" = $1 AND (
+                  t."TELEFONE" = $2
+                  OR (length($2) = 9 AND left($2, 1) = '9' AND t."TELEFONE" = right($2, 8))
+                  OR (length($2) = 8 AND t."TELEFONE" = '9' || $2)
+                )
+              )
+            ELSE
+              telefones::text ILIKE $3
+              OR (length($2) = 9 AND left($2, 1) = '9' AND telefones::text ILIKE $4)
+              OR (length($2) = 8 AND telefones::text ILIKE $5)
+          END
+        LIMIT 20
+      `;
+      const r = await consultaPool.query(queryStr, [ddd, phoneNum, fullNumLike, phone8Like, phone9Like]);
+      if (r.rows.length > 0) {
+        cpfResults = r.rows;
+      }
+    }
+  } catch (e) {
+    console.error("Phone CPF query error:", e);
+  }
+
+  if (cpfResults.length === 0) {
+    try {
+      const ext = await fetchAndSaveExternal('tel', national);
+      if (ext) {
+        const rawList = ext.RESULTADOS || (ext.DADOS ? [ext] : []);
+        // Normalize DADOS_DONO structure from busca_tel API
+        cpfResults = rawList.map((item: any) => {
+          if (item.DADOS_DONO && !item.DADOS) {
+            return { ...item, DADOS: item.DADOS_DONO };
+          }
+          return item;
+        });
+      }
+    } catch (e) {
+      console.error("External phone query error:", e);
+    }
+  }
+
+  if (cpfResults.length > 0) {
+    for (const item of cpfResults.slice(0, 10)) {
+      const raw = item.dados_raw ? (typeof item.dados_raw === 'string' ? JSON.parse(item.dados_raw) : item.dados_raw) : item;
+      const d = raw.DADOS || raw.DADOS_DONO || item;
+      const cpfStr = d.CPF || item.cpf || "";
+      const cpfDigits = String(cpfStr).replace(/\D/g, '');
+      const cpfFormatted = cpfDigits.length === 11 ? cpfDigits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : String(cpfStr);
+
+      sections.push({
+        title: `Cadastro — ${d.NOME || item.nome || "—"}`,
+        fields: [
+          { label: "CPF", value: cpfFormatted, mono: true },
+          { label: "Nome completo", value: d.NOME || item.nome || "—" },
+          { label: "Data de nascimento", value: d.NASC ? String(d.NASC).substring(0, 10) : (item.nascimento ? String(item.nascimento).substring(0, 10) : "—"), mono: true },
+          { label: "Sexo", value: d.SEXO || item.sexo || "—" },
+          { label: "Nome da mãe", value: d.NOME_MAE || item.nome_mae || "—" },
+          { label: "Nome do pai", value: d.NOME_PAI || item.nome_pai || "—" },
+          { label: "RG", value: d.RG || item.rg || "—", mono: true },
+        ],
+      });
+
+      // Contatos
+      const tels: any[] = raw.TELEFONE || (item.telefones ? (typeof item.telefones === 'string' ? JSON.parse(item.telefones) : item.telefones) : []);
+      const ems: any[] = raw.EMAIL || (item.emails ? (typeof item.emails === 'string' ? JSON.parse(item.emails) : item.emails) : []);
+      if (tels.length > 0 || ems.length > 0) {
+        sections.push({
+          title: `Contatos — ${d.NOME || item.nome || "—"}`,
+          fields: [
+            { label: "E-mails", value: ems.length > 0 ? ems.map(formatEmail).filter(Boolean).join(", ") : "Nenhum" },
+          ],
+          list: tels.map((t: any) => {
+            const formatted = formatPhone(t);
+            const clean = formatted.replace(/[() -]/g, "");
+            return `Telefone: ${formatted} (${clean.length >= 10 ? "Móvel" : "Fixo"})`;
+          }),
+        });
+      }
+
+      // Endereços
+      const ends: any[] = raw.ENDERECOS || (item.enderecos ? (typeof item.enderecos === 'string' ? JSON.parse(item.enderecos) : item.enderecos) : []);
+      if (ends.length > 0) {
+        sections.push({
+          title: `Endereços — ${d.NOME || item.nome || "—"}`,
+          list: ends.map((e: any) => `${e.LOGRADOURO || ""}, ${e.NUMERO || ""} ${e.COMPLEMENTO || ""} - ${e.BAIRRO || ""} - ${e.CIDADE || ""}/${e.UF || ""} (CEP: ${e.CEP || ""})`),
+        });
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    tool: "phone",
+    query: raw,
+    summary: `${carrier} • ${national} • ${leakResults.length} vazamentos`,
+    sections,
+    sources,
+  };
+}
+
+const USERNAME_SITES: { name: string; domain: string; url: (u: string) => string }[] = [
+  { name: "GitHub", domain: "github.com", url: (u) => `https://github.com/${u}` },
+  { name: "GitLab", domain: "gitlab.com", url: (u) => `https://gitlab.com/${u}` },
+  { name: "BitBucket", domain: "bitbucket.org", url: (u) => `https://bitbucket.org/${u}` },
+  { name: "Twitter / X", domain: "x.com", url: (u) => `https://x.com/${u}` },
+  { name: "Instagram", domain: "instagram.com", url: (u) => `https://www.instagram.com/${u}/` },
+  { name: "TikTok", domain: "tiktok.com", url: (u) => `https://www.tiktok.com/@${u}` },
+  { name: "YouTube", domain: "youtube.com", url: (u) => `https://www.youtube.com/@${u}` },
+  { name: "Reddit", domain: "reddit.com", url: (u) => `https://www.reddit.com/user/${u}` },
+  { name: "Twitch", domain: "twitch.tv", url: (u) => `https://www.twitch.tv/${u}` },
+  { name: "Medium", domain: "medium.com", url: (u) => `https://medium.com/@${u}` },
+  { name: "Steam", domain: "steamcommunity.com", url: (u) => `https://steamcommunity.com/id/${u}` },
+  { name: "Pinterest", domain: "pinterest.com", url: (u) => `https://www.pinterest.com/${u}/` },
+  { name: "DeviantArt", domain: "deviantart.com", url: (u) => `https://www.deviantart.com/${u}` },
+  { name: "Dev.to", domain: "dev.to", url: (u) => `https://dev.to/${u}` },
+  { name: "HackerNews", domain: "news.ycombinator.com", url: (u) => `https://news.ycombinator.com/user?id=${u}` },
+  { name: "Replit", domain: "replit.com", url: (u) => `https://replit.com/@${u}` },
+  { name: "Vimeo", domain: "vimeo.com", url: (u) => `https://vimeo.com/${u}` },
+  { name: "Spotify", domain: "spotify.com", url: (u) => `https://open.spotify.com/user/${u}` },
+  { name: "SoundCloud", domain: "soundcloud.com", url: (u) => `https://soundcloud.com/${u}` },
+  { name: "Behance", domain: "behance.net", url: (u) => `https://www.behance.net/${u}` },
+  { name: "Dribbble", domain: "dribbble.com", url: (u) => `https://dribbble.com/${u}` },
+  { name: "Keybase", domain: "keybase.io", url: (u) => `https://keybase.io/${u}` },
+  { name: "Telegram", domain: "t.me", url: (u) => `https://t.me/${u}` },
+  { name: "Facebook", domain: "facebook.com", url: (u) => `https://www.facebook.com/${u}` },
+  { name: "Snapchat", domain: "snapchat.com", url: (u) => `https://www.snapchat.com/add/${u}` },
+  { name: "Pastebin", domain: "pastebin.com", url: (u) => `https://pastebin.com/u/${u}` },
+  { name: "Patreon", domain: "patreon.com", url: (u) => `https://www.patreon.com/${u}` },
+  { name: "Flickr", domain: "flickr.com", url: (u) => `https://www.flickr.com/people/${u}` },
+  { name: "Last.fm", domain: "last.fm", url: (u) => `https://www.last.fm/user/${u}` },
+  { name: "Disqus", domain: "disqus.com", url: (u) => `https://disqus.com/by/${u}` },
+  { name: "Kaggle", domain: "kaggle.com", url: (u) => `https://www.kaggle.com/${u}` },
+  { name: "CodePen", domain: "codepen.io", url: (u) => `https://codepen.io/${u}` },
+  { name: "Producthunt", domain: "producthunt.com", url: (u) => `https://www.producthunt.com/@${u}` },
+  { name: "Mixcloud", domain: "mixcloud.com", url: (u) => `https://www.mixcloud.com/${u}/` },
+  { name: "About.me", domain: "about.me", url: (u) => `https://about.me/${u}` },
+  { name: "Wattpad", domain: "wattpad.com", url: (u) => `https://www.wattpad.com/user/${u}` },
+  { name: "Quora", domain: "quora.com", url: (u) => `https://www.quora.com/profile/${u}` },
+  { name: "Goodreads", domain: "goodreads.com", url: (u) => `https://www.goodreads.com/${u}` },
+  { name: "Imgur", domain: "imgur.com", url: (u) => `https://imgur.com/user/${u}` },
+  // ===== Pacote estendido =====
+  { name: "Stack Overflow", domain: "stackoverflow.com", url: (u) => `https://stackoverflow.com/users/${u}` },
+  { name: "HackerRank", domain: "hackerrank.com", url: (u) => `https://www.hackerrank.com/profile/${u}` },
+  { name: "LeetCode", domain: "leetcode.com", url: (u) => `https://leetcode.com/${u}` },
+  { name: "Codeforces", domain: "codeforces.com", url: (u) => `https://codeforces.com/profile/${u}` },
+  { name: "Codewars", domain: "codewars.com", url: (u) => `https://www.codewars.com/users/${u}` },
+  { name: "TryHackMe", domain: "tryhackme.com", url: (u) => `https://tryhackme.com/p/${u}` },
+  { name: "HackTheBox", domain: "hackthebox.com", url: (u) => `https://app.hackthebox.com/profile/${u}` },
+  { name: "Bugcrowd", domain: "bugcrowd.com", url: (u) => `https://bugcrowd.com/${u}` },
+  { name: "HackerOne", domain: "hackerone.com", url: (u) => `https://hackerone.com/${u}` },
+  { name: "Bluesky", domain: "bsky.app", url: (u) => `https://bsky.app/profile/${u}` },
+  { name: "Threads", domain: "threads.net", url: (u) => `https://www.threads.net/@${u}` },
+  { name: "Mastodon (social)", domain: "mastodon.social", url: (u) => `https://mastodon.social/@${u}` },
+  { name: "Linktree", domain: "linktr.ee", url: (u) => `https://linktr.ee/${u}` },
+  { name: "Substack", domain: "substack.com", url: (u) => `https://${u}.substack.com` },
+  { name: "Kick", domain: "kick.com", url: (u) => `https://kick.com/${u}` },
+  { name: "Rumble", domain: "rumble.com", url: (u) => `https://rumble.com/c/${u}` },
+  { name: "Roblox", domain: "roblox.com", url: (u) => `https://www.roblox.com/user.aspx?username=${u}` },
+  { name: "Letterboxd", domain: "letterboxd.com", url: (u) => `https://letterboxd.com/${u}` },
+  { name: "MyAnimeList", domain: "myanimelist.net", url: (u) => `https://myanimelist.net/profile/${u}` },
+  { name: "Anilist", domain: "anilist.co", url: (u) => `https://anilist.co/user/${u}` },
+  { name: "ArtStation", domain: "artstation.com", url: (u) => `https://www.artstation.com/${u}` },
+  { name: "Hashnode", domain: "hashnode.com", url: (u) => `https://hashnode.com/@${u}` },
+  { name: "Itch.io", domain: "itch.io", url: (u) => `https://${u}.itch.io` },
+  { name: "Bandcamp", domain: "bandcamp.com", url: (u) => `https://bandcamp.com/${u}` },
+  { name: "AO3", domain: "archiveofourown.org", url: (u) => `https://archiveofourown.org/users/${u}` },
+  { name: "Fandom", domain: "fandom.com", url: (u) => `https://www.fandom.com/u/${u}` },
+  { name: "Trakt", domain: "trakt.tv", url: (u) => `https://trakt.tv/users/${u}` },
+  { name: "Chess.com", domain: "chess.com", url: (u) => `https://www.chess.com/member/${u}` },
+  { name: "Lichess", domain: "lichess.org", url: (u) => `https://lichess.org/@/${u}` },
+  { name: "OpenStreetMap", domain: "openstreetmap.org", url: (u) => `https://www.openstreetmap.org/user/${u}` },
+  { name: "OpenSea", domain: "opensea.io", url: (u) => `https://opensea.io/${u}` },
+  { name: "GoFundMe", domain: "gofundme.com", url: (u) => `https://www.gofundme.com/f/${u}` },
+];
+
+async function toolUsername(username: string): Promise<OsintResult> {
+  const u = username.replace(/^@/, "").trim();
+  
+  // 1. Query credentials multi-pool for leaks containing the username
+  let leakResults: any[] = [];
+  try {
+    const r = await botMultiPool.query(
+      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE email LIKE $1 LIMIT 50`,
+      [`%${u}%`]
+    );
+    if (r && r.rows) {
+      leakResults = r.rows;
+    }
+  } catch (e) {
+    console.error("Username leak search error:", e);
+  }
+
+  // 2. Perform concurrent profile scan across social networks
+  const checks = await Promise.all(USERNAME_SITES.map(async (s) => {
+    const url = s.url(u);
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 7000);
+      const r = await fetch(url, { method: "GET", redirect: "manual", signal: ctrl.signal, headers: { "user-agent": "Mozilla/5.0 NoxIntel-OSINT" } });
+      clearTimeout(t);
+      const found = r.status === 200;
+      return { site: s, url, status: r.status, found };
+    } catch {
+      return { site: s, url, status: 0, found: false };
+    }
+  }));
+  const hits = checks.filter((c) => c.found);
+
+  const sections: Section[] = [];
+  const sources: string[] = [`Verificação direta em ${checks.length} plataformas`, "Banco de dados local"];
+
+  if (leakResults.length > 0) {
+    const creds = buildCredentialCards(leakResults);
+    sections.push({
+      title: `Vazamentos de Credenciais Relacionados (${creds.length})`,
+      credentials: creds,
+    });
+  } else {
+    sections.push({
+      title: "Vazamentos de Credenciais",
+      fields: [{ label: "Resultado", value: "Nenhuma credencial exposta foi associada a este username nos bancos vazados.", ok: true }],
+    });
+  }
+
+  // Display only confirmed profile matches
+  if (hits.length > 0) {
+    hits.forEach((c) => {
+      sections.push({
+        title: `${c.site.name} — ${c.site.domain}`,
+        icon: `https://www.google.com/s2/favicons?domain=${c.site.domain}&sz=64`,
+        collapsible: true,
+        fields: [
+          { label: "Status", value: "Perfil encontrado", ok: true },
+          { label: "URL", value: c.url, mono: true },
+          { label: "Plataforma", value: c.site.domain, mono: true },
+        ],
+        links: [{ label: `Abrir no ${c.site.name}`, url: c.url }],
+      });
+    });
+  }
+
+  return {
+    ok: true,
+    tool: "username",
+    query: u,
+    summary: `${hits.length}/${checks.length} plataformas com perfil localizado · ${leakResults.length} vazamentos no banco`,
+    sections,
+    sources,
+  };
+}
+
+async function toolLink(url: string): Promise<OsintResult> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const r = await fetch(url, { redirect: "follow", signal: ctrl.signal, headers: { "user-agent": "Mozilla/5.0 NoxIntel-OSINT" } });
+    clearTimeout(t);
+    const text = await r.text();
+    const title = text.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || "—";
+    const desc = text.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)?.[1] || "—";
+    const ogImage = text.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)?.[1] || "—";
+    const u = new URL(r.url);
+    return {
+      ok: true,
+      tool: "link",
+      query: url,
+      summary: `${r.status} • ${u.hostname} • ${title.slice(0, 80)}`,
+      sections: [
+        {
+          title: "URL",
+          fields: [
+            { label: "Final URL", value: r.url, mono: true },
+            { label: "Status", value: String(r.status), ok: r.ok, warn: !r.ok },
+            { label: "Servidor", value: r.headers.get("server") || "—" },
+            { label: "Content-Type", value: r.headers.get("content-type") || "—" },
+            { label: "Host", value: u.hostname, mono: true },
+          ],
+        },
+        {
+          title: "Metadados",
+          fields: [
+            { label: "Title", value: title },
+            { label: "Description", value: desc },
+            { label: "OG image", value: ogImage, mono: true },
+          ],
+        },
+      ],
+      sources: ["fetch + parse HTML"],
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function toolBlockchain(addr: string): Promise<OsintResult> {
+  // BTC via blockchain.info
+  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(addr)) {
+    const r = await fetch(`https://blockchain.info/rawaddr/${encodeURIComponent(addr)}?limit=10`);
+    if (!r.ok) throw new Error("Endereço BTC inválido");
+    const d = await r.json() as { address: string; total_received: number; total_sent: number; final_balance: number; n_tx: number; txs: { hash: string; time: number; result: number }[] };
+    return {
+      ok: true,
+      tool: "blockchain",
+      query: addr,
+      summary: `BTC • saldo ${(d.final_balance / 1e8).toFixed(8)} • ${d.n_tx} tx`,
+      sections: [
+        {
+          title: "Carteira BTC",
+          fields: [
+            { label: "Endereço", value: d.address, mono: true },
+            { label: "Saldo", value: `${(d.final_balance / 1e8).toFixed(8)} BTC` },
+            { label: "Recebido", value: `${(d.total_received / 1e8).toFixed(8)} BTC` },
+            { label: "Enviado", value: `${(d.total_sent / 1e8).toFixed(8)} BTC` },
+            { label: "Transações", value: String(d.n_tx) },
+          ],
+        },
+        {
+          title: "Últimas transações",
+          list: d.txs.slice(0, 10).map((t) => `${new Date(t.time * 1000).toLocaleString("pt-BR")} • ${(t.result / 1e8).toFixed(8)} BTC • ${t.hash.slice(0, 24)}…`),
+        },
+      ],
+      sources: ["blockchain.info"],
+    };
+  }
+  // ETH-like
+  if (/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+    return {
+      ok: true,
+      tool: "blockchain",
+      query: addr,
+      summary: "Endereço estilo EVM (Ethereum/Polygon/BSC)",
+      sections: [
+        {
+          title: "Endereço",
+          fields: [{ label: "Hash", value: addr, mono: true }],
+        },
+        {
+          title: "Explorers",
+          links: [
+            { label: "Etherscan", url: `https://etherscan.io/address/${addr}` },
+            { label: "Polygonscan", url: `https://polygonscan.com/address/${addr}` },
+            { label: "BscScan", url: `https://bscscan.com/address/${addr}` },
+            { label: "Arbiscan", url: `https://arbiscan.io/address/${addr}` },
+          ],
+        },
+      ],
+      sources: ["Heurística + explorers públicos"],
+    };
+  }
+  throw new Error("Formato não reconhecido (BTC/EVM).");
+}
+
+async function toolSocial(handle: string): Promise<OsintResult> {
+  const h = handle.replace(/^@/, "").trim();
+  const checks = await Promise.all(USERNAME_SITES.map(async (s) => {
+    const url = s.url(h);
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 7000);
+      const r = await fetch(url, {
+        method: "GET",
+        redirect: "manual",
+        signal: ctrl.signal,
+        headers: { "user-agent": "Mozilla/5.0 NoxIntel-OSINT" },
+      });
+      clearTimeout(t);
+      let title: string | undefined;
+      if (r.status === 200) {
+        try {
+          const text = (await r.text()).slice(0, 8000);
+          title = text.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim().slice(0, 120);
+        } catch { /* ignore */ }
+      }
+      return { name: s.name, url, status: r.status, found: r.status === 200, title };
+    } catch {
+      return { name: s.name, url, status: 0, found: false, title: undefined };
+    }
+  }));
+  const hits = checks.filter((c) => c.found);
+  const misses = checks.filter((c) => !c.found);
+  return {
+    ok: true,
+    tool: "social",
+    query: handle,
+    summary: `${hits.length} perfis confirmados para "${h}" em ${checks.length} plataformas`,
+    sections: [
+      {
+        title: `Perfis confirmados (${hits.length})`,
+        fields: hits.map((h) => ({
+          label: h.name,
+          value: h.title ? `${h.url}\n${h.title}` : h.url,
+          mono: true,
+          ok: true,
+        })),
+        links: hits.map((h) => ({ label: `Abrir ${h.name}`, url: h.url })),
+      },
+      {
+        title: `Não encontrados (${misses.length})`,
+        list: misses.map((c) => `${c.name} — HTTP ${c.status || "erro"}`),
+      },
+    ],
+    sources: [`Verificação direta em ${checks.length} plataformas`],
+  };
+}
+
+async function toolName(name: string): Promise<OsintResult> {
+  const q = encodeURIComponent(`"${name}"`);
+  
+  const sections: Section[] = [];
+  const sources: string[] = [
+    "Google", "Bing", "DuckDuckGo", "Yandex", "Escavador", "JusBrasil",
+    "ConsultaSócio", "TSE", "CNDT", "DOU", "Lattes", "Scholar", "ResearchGate",
+    "Internet Archive", "IntelX", "DeHashed", "OpenCorporates", "OFAC",
+    "TinEye", "PimEyes", "FaceCheck.ID", "Banco de dados local"
+  ];
+
+  // 1. Check local cache first
+  let nameResults: any[] = [];
+  try {
+    if (consultaPool) {
+      const r = await consultaPool.query(`SELECT cpf, nome, sexo, nascimento, nome_mae, nome_pai, rg FROM cpf_cache WHERE nome ILIKE $1 LIMIT 20`, [`%${name}%`]);
+      if (r.rows.length > 0) {
+        nameResults = r.rows.map((row: any) => ({
+          DADOS: {
+            CPF: row.cpf,
+            NOME: row.nome,
+            SEXO: row.sexo,
+            NASC: row.nascimento,
+            NOME_MAE: row.nome_mae,
+            NOME_PAI: row.nome_pai,
+            RG: row.rg
+          }
+        }));
+      }
+    }
+  } catch (e) {
+    console.error("Name cache query error:", e);
+  }
+
+  // 2. Query external name API if not found locally
+  if (nameResults.length === 0) {
+    try {
+      const ext = await fetchAndSaveExternal('nome', name);
+      if (ext) {
+        nameResults = ext.RESULTADOS || (ext.DADOS ? [ext] : []);
+      }
+    } catch (e) {
+      console.error("External name query error:", e);
+    }
+  }
+
+  // Format database results
+  if (nameResults.length > 0) {
+    for (const item of nameResults.slice(0, 10)) {
+      const raw = item.dados_raw ? (typeof item.dados_raw === 'string' ? JSON.parse(item.dados_raw) : item.dados_raw) : item;
+      const d = raw.DADOS || item;
+      const cpfStr = d.CPF || item.cpf || "";
+      const cpfDigits = String(cpfStr).replace(/\D/g, '');
+      const cpfFormatted = cpfDigits.length === 11 ? cpfDigits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : String(cpfStr);
+
+      sections.push({
+        title: `Cadastro — ${d.NOME || item.nome || "—"}`,
+        fields: [
+          { label: "CPF", value: cpfFormatted, mono: true },
+          { label: "Nome completo", value: d.NOME || item.nome || "—" },
+          { label: "Data de nascimento", value: d.NASC ? String(d.NASC).substring(0, 10) : (item.nascimento ? String(item.nascimento).substring(0, 10) : "—"), mono: true },
+          { label: "Sexo", value: d.SEXO || item.sexo || "—" },
+          { label: "Nome da mãe", value: d.NOME_MAE || item.nome_mae || "—" },
+          { label: "Nome do pai", value: d.NOME_PAI || item.nome_pai || "—" },
+          { label: "RG", value: d.RG || item.rg || "—", mono: true },
+        ],
+      });
+
+      // Contatos
+      const tels: any[] = raw.TELEFONE || (item.telefones ? (typeof item.telefones === 'string' ? JSON.parse(item.telefones) : item.telefones) : []);
+      const ems: any[] = raw.EMAIL || (item.emails ? (typeof item.emails === 'string' ? JSON.parse(item.emails) : item.emails) : []);
+      if (tels.length > 0 || ems.length > 0) {
+        sections.push({
+          title: `Contatos — ${d.NOME || item.nome || "—"}`,
+          fields: [
+            { label: "E-mails", value: ems.length > 0 ? ems.map(formatEmail).filter(Boolean).join(", ") : "Nenhum" },
+          ],
+          list: tels.map((t: any) => {
+            const formatted = formatPhone(t);
+            const clean = formatted.replace(/[() -]/g, "");
+            return `Telefone: ${formatted} (${clean.length >= 10 ? "Móvel" : "Fixo"})`;
+          }),
+        });
+      }
+
+      // Endereços
+      const ends: any[] = raw.ENDERECOS || (item.enderecos ? (typeof item.enderecos === 'string' ? JSON.parse(item.enderecos) : item.enderecos) : []);
+      if (ends.length > 0) {
+        sections.push({
+          title: `Endereços — ${d.NOME || item.nome || "—"}`,
+          list: ends.map((e: any) => `${e.LOGRADOURO || ""}, ${e.NUMERO || ""} ${e.COMPLEMENTO || ""} - ${e.BAIRRO || ""} - ${e.CIDADE || ""}/${e.UF || ""} (CEP: ${e.CEP || ""})`),
+        });
+      }
+    }
+  } else {
+    sections.push({
+      title: "Busca Cadastral (Brasil)",
+      fields: [{ label: "Resultado", value: "Nenhuma pessoa com este nome encontrada nas bases de dados cadastrais.", warn: true }]
+    });
+  }
+
+  // Add search links / dorks (original style)
+  sections.push(
+    {
+      title: "Motores de busca gerais",
+      icon: `https://www.google.com/s2/favicons?domain=google.com&sz=64`,
+      collapsible: true,
+      links: [
+        { label: "Google", url: `https://www.google.com/search?q=${q}` },
+        { label: "Google (imagens)", url: `https://www.google.com/search?q=${q}&tbm=isch` },
+        { label: "Bing", url: `https://www.bing.com/search?q=${q}` },
+        { label: "DuckDuckGo", url: `https://duckduckgo.com/?q=${q}` },
+        { label: "Yandex", url: `https://yandex.com/search/?text=${q}` },
+      ],
+    },
+    {
+      title: "Redes sociais (dorks por site:)",
+      icon: `https://www.google.com/s2/favicons?domain=linkedin.com&sz=64`,
+      collapsible: true,
+      links: [
+        { label: "LinkedIn", url: `https://www.google.com/search?q=${q}+site:linkedin.com` },
+        { label: "Instagram", url: `https://www.google.com/search?q=${q}+site:instagram.com` },
+        { label: "Facebook", url: `https://www.google.com/search?q=${q}+site:facebook.com` },
+        { label: "Twitter / X", url: `https://www.google.com/search?q=${q}+site:x.com` },
+        { label: "TikTok", url: `https://www.google.com/search?q=${q}+site:tiktok.com` },
+        { label: "YouTube", url: `https://www.google.com/search?q=${q}+site:youtube.com` },
+        { label: "Reddit", url: `https://www.google.com/search?q=${q}+site:reddit.com` },
+        { label: "Telegram (t.me)", url: `https://www.google.com/search?q=${q}+site:t.me` },
+      ],
+    },
+    {
+      title: "Brasil — registros públicos & justiça",
+      icon: `https://www.google.com/s2/favicons?domain=jusbrasil.com.br&sz=64`,
+      collapsible: true,
+      fields: [
+        { label: "Escavador", value: "Currículos Lattes, processos, citações e relacionamentos profissionais" },
+        { label: "JusBrasil", value: "Consulta processual unificada (cível, criminal, trabalhista)" },
+        { label: "ConsultaSócio", value: "Empresas em que a pessoa figura como sócia/administradora" },
+        { label: "TSE", value: "Lista de candidaturas, doações e prestações de contas" },
+        { label: "CNDT", value: "Certidão Nacional de Débitos Trabalhistas" },
+        { label: "Diários Oficiais", value: "Publicações em DOU, DOE e diários municipais" },
+      ],
+      links: [
+        { label: "Escavador", url: `https://www.escavador.com/busca?q=${encodeURIComponent(name)}` },
+        { label: "JusBrasil", url: `https://www.jusbrasil.com.br/busca?q=${q}` },
+        { label: "ConsultaSócio", url: `https://www.consultasocio.com/q?q=${encodeURIComponent(name)}` },
+        { label: "TSE candidaturas", url: `https://divulgacandcontas.tse.jus.br/divulga/#/busca/nome/${encodeURIComponent(name)}` },
+        { label: "Google (diários oficiais)", url: `https://www.google.com/search?q=${q}+site:jusbrasil.com.br/diarios` },
+      ],
+    }
+  );
+
+  return {
+    ok: true,
+    tool: "name",
+    query: name,
+    summary: nameResults.length > 0 ? `${nameResults.length} pessoas localizadas cadastralmente` : "Dorks e links de pesquisa de nome",
+    sections,
+    sources,
+  };
+}
+
+function toolMeta(file: string): Promise<OsintResult> {
+  return Promise.resolve({
+    ok: true,
+    tool: "meta",
+    query: file,
+    summary: "Extração de metadados requer upload do arquivo (em breve)",
+    sections: [
+      {
+        title: "Como funciona",
+        list: [
+          "EXIF de imagens (JPG/HEIC): câmera, GPS, data, software",
+          "PDF: autor, software, datas de criação e modificação",
+          "Office (DOCX/XLSX): autor, revisões, comentários ocultos",
+        ],
+      },
+      {
+        title: "Ferramentas externas",
+        links: [
+          { label: "ExifTool (online)", url: "https://exif.tools/" },
+          { label: "Metadata2Go", url: "https://www.metadata2go.com/" },
+        ],
+      },
+    ],
+    sources: ["Roadmap"],
+  });
+}
+
+// ---------- route ----------
+export const Route = createFileRoute("/api/osint")({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        let body: { tool?: string; query?: string };
+        try {
+          body = await request.json() as { tool?: string; query?: string };
+        } catch {
+          return json({ ok: false, tool: "", query: "", error: "JSON inválido", sections: [], sources: [] }, 400);
+        }
+        const tool = String(body.tool || "").toLowerCase();
+        const query = String(body.query || "").trim();
+        if (!tool || !query) {
+          return json({ ok: false, tool, query, error: "Parâmetros 'tool' e 'query' são obrigatórios.", sections: [], sources: [] }, 400);
+        }
+
+        // --- Auth + quota ---
+        const auth = request.headers.get("authorization") || "";
+        const tokenStr = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+        if (!tokenStr) {
+          return json({ ok: false, tool, query, error: "Faça login para usar as ferramentas.", sections: [], sources: [] }, 401);
+        }
+        try {
+          let r: OsintResult;
+          switch (tool) {
+            case "email": r = await toolEmail(query); break;
+            case "password": r = await toolPassword(query); break;
+            case "breach": r = await toolEmail(query); r.tool = "breach"; break;
+            case "ip": r = await toolIp(query); break;
+            case "domain": r = await toolDomain(query); break;
+            case "cpf": case "cnpj": r = await toolCpfCnpj(query); break;
+            case "phone": r = await toolPhone(query); break;
+            case "username": r = await toolUsername(query); break;
+            case "link": r = await toolLink(query); break;
+            case "blockchain": r = await toolBlockchain(query); break;
+            case "social": r = await toolSocial(query); break;
+            case "name": r = await toolName(query); break;
+            case "meta": r = await toolMeta(query); break;
+            default:
+              return json({ ok: false, tool, query, error: "Ferramenta desconhecida.", sections: [], sources: [] }, 400);
+          }
+          // Track usage
+          try {
+            const { verifyToken } = await import("@/lib/auth");
+            const payload = verifyToken(tokenStr);
+            if (payload) {
+              const { noxPool } = await import("@/lib/db");
+              const today = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+              const results = countResults(r);
+              await noxPool.query(
+                `INSERT INTO search_usage (user_id, day, searches, results) VALUES ($1, $2, 1, $3)
+                 ON CONFLICT (user_id, day) DO UPDATE SET searches = search_usage.searches + 1, results = search_usage.results + $3, updated_at = NOW()`,
+                [payload.userId, today, results]
+              );
+            }
+          } catch (e) {
+            console.error("Failed to track usage:", e);
+          }
+          return json(r);
+        } catch (err) {
+          return json({
+            ok: false,
+            tool,
+            query,
+            error: err instanceof Error ? err.message : "Erro desconhecido",
+            sections: [],
+            sources: [],
+          }, 500);
+        }
+      },
+    },
+  },
+});
