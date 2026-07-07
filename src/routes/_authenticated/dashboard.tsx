@@ -38,6 +38,7 @@ const TOOLS: { id: string; icon: typeof Mail; label: string; desc: string; sampl
   { id: "ip", icon: Network, label: "IP", desc: "Geolocalização, ISP, reputação e portas abertas do endereço.", sample: "200.150.10.42" },
   { id: "blockchain", icon: Wallet, label: "Blockchain", desc: "Rastreie carteiras de criptomoedas e transações.", sample: "0x742d35Cc6634C0532925a3b8" },
   { id: "link", icon: Link2, label: "Link / URL", desc: "Análise de links e URLs. Identifique conexões e relações online.", sample: "https://loja-suspeita.shop/promo" },
+  { id: "urllogins", icon: Key, label: "URL Logins", desc: "Busque logins e senhas vazados associados a um domínio ou URL.", sample: "loja-suspeita.shop", tag: "CRED" },
   { id: "social", icon: Share2, label: "Redes sociais", desc: "Cross-reference entre plataformas e análise de conexões.", sample: "@perfil_alvo" },
   { id: "breach", icon: ShieldAlert, label: "Vazamentos", desc: "Credenciais expostas em vazamentos e dumps conhecidos.", sample: "alvo@exemplo.com" },
   { id: "password", icon: Lock, label: "Senha", desc: "Descubra em quais vazamentos uma senha apareceu.", sample: "" },
@@ -66,69 +67,76 @@ function Sparkline({ data, accent = false }: { data: number[]; accent?: boolean 
   }).join(" ");
   const area = `0,${h} ${pts} ${w},${h}`;
   const id = `sg-${useId().replace(/:/g, "")}`;
+  const color = accent ? "#5ab8e0" : "rgba(255,255,255,0.25)";
   return (
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-7 w-full">
       <defs>
         <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="currentColor" stopOpacity={accent ? 0.5 : 0.3} />
-          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+          <stop offset="0%" stopColor={color} stopOpacity={accent ? 0.35 : 0.15} />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <polygon points={area} fill={`url(#${id})`} className="text-primary" />
-      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary" />
+      <polygon points={area} fill={`url(#${id})`} />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function StatCard({ s }: { s: { icon: any; label: string; value: string; limit?: number; trend: string; spark: number[]; accent?: boolean } }) {
-  const tilt = useTilt(8);
+  const tilt = useTilt(6);
+  const exceeded = s.limit !== undefined && Number(s.value) >= s.limit;
+  const pct = s.limit ? Math.min((Number(s.value) / s.limit) * 100, 100) : 0;
   return (
     <div className="group relative w-[65vw] shrink-0 snap-center sm:w-auto">
       <div
         ref={tilt.ref}
         onMouseMove={tilt.onMouseMove}
         onMouseLeave={tilt.onMouseLeave}
-        className="relative overflow-hidden rounded-xl border border-primary/30 p-4 text-white transition-all duration-200 sm:p-5"
-        style={{
-          background: "linear-gradient(#2a8fc4 49.18%, #5ab8e0 113.93%)",
-          boxShadow: "0 8px 32px -8px rgba(0,0,0,0.6), 0 0 4px 0 rgba(255,255,255,0.07), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset",
-        }}
+        className="relative overflow-hidden rounded-2xl border border-[#2a8fc4]/10 p-[1px] transition-all duration-500 hover:border-[#2a8fc4]/25 hover:shadow-[0_24px_48px_-12px_rgba(42,143,196,0.2)]"
+        style={{ boxShadow: "0 0 0 1px rgba(42,143,196,0.05), 0 8px 32px -12px rgba(0,0,0,0.5)" }}
       >
-        <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-        <div className="relative flex items-center justify-between">
-          <div
-            className="flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-300 group-hover:scale-105"
-            style={{ background: "rgba(255,255,255,0.1)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}
-          >
-            <s.icon className="h-4.5 w-4.5 text-white" />
+        <div className="relative h-full rounded-2xl bg-[#0a0f18] p-4 sm:p-5"
+          style={{ boxShadow: "inset 0 1px 0 rgba(42,143,196,0.08), inset 0 -1px 0 rgba(0,0,0,0.3)" }}
+        >
+          <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent pointer-events-none" />
+          <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-[#2a8fc4]/5 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
+          <div className="relative flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:h-10 sm:w-10"
+                style={{ background: "linear-gradient(135deg, rgba(42,143,196,0.3), rgba(90,184,224,0.1))", boxShadow: "0 0 16px rgba(42,143,196,0.15)" }}
+              >
+                <div className="absolute inset-0 rounded-xl ring-1 ring-[#2a8fc4]/15 inset-ring inset-ring-[#2a8fc4]/10" />
+                <s.icon className="h-4 w-4 text-[#5ab8e0] sm:h-[18px] sm:w-[18px]" />
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-[#5ab8e0]/50 sm:text-xs">{s.label}</p>
+                <p className="text-xl font-bold tracking-tight tabular-nums text-white sm:text-3xl">
+                  {s.value}{s.limit !== undefined ? <span className="text-sm font-normal text-white/30 sm:text-lg">/{s.limit}</span> : null}
+                </p>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1 rounded-md border border-[#2a8fc4]/15 bg-[#2a8fc4]/8 px-2 py-0.5 text-[9px] font-medium text-[#5ab8e0]/60 sm:gap-1 sm:px-2.5 sm:text-[10px]">
+              <TrendingUp className="h-2.5 w-2.5 sm:h-3 sm:w-3" /> {s.trend}
+            </span>
           </div>
-          <span
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold tracking-wide"
-            style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.8)" }}
-          >
-            <TrendingUp className="h-3 w-3" /> {s.trend}
-          </span>
-        </div>
-        <p className="relative mt-3 text-2xl font-extrabold tracking-tight tabular-nums sm:mt-4 sm:text-3xl text-white">
-          {s.value}{s.limit !== undefined ? <span className="text-sm font-medium text-white/60"> / {s.limit}</span> : null}
-        </p>
-        <p className="relative mt-0.5 text-[11px] font-medium text-white/60 sm:text-xs">{s.label}</p>
-        {s.limit !== undefined ? (
-          <div className="relative mt-3 h-1 overflow-hidden rounded-full bg-white/15">
-            <div className="h-full rounded-full bg-white/40 transition-all duration-500"
-              style={{ width: `${Math.min((Number(s.value) / s.limit) * 100, 100)}%` }}
-            />
+          {s.limit !== undefined && (
+            <div className="relative mt-3.5 space-y-1 sm:mt-4">
+              <div className="h-1.5 overflow-hidden rounded-full bg-[#2a8fc4]/8">
+                <div className="h-full rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${pct}%`, background: exceeded ? "linear-gradient(90deg, #f87171, #ef4444)" : "linear-gradient(90deg, #2a8fc4, #5ab8e0)", boxShadow: "0 0 8px rgba(42,143,196,0.4)" }}
+                />
+              </div>
+              {exceeded && (
+                <p className="flex items-center gap-1 text-[9px] font-semibold text-[#f87171] sm:text-[10px]">
+                  <AlertTriangle className="h-2.5 w-2.5" /> Limite excedido · reseta em {23 - new Date().getHours()}h
+                </p>
+              )}
+            </div>
+          )}
+          <div className="relative mt-3.5 sm:mt-4">
+            <Sparkline data={s.spark} accent={true} />
           </div>
-        ) : null}
-        <div className="relative mt-3 sm:mt-4">
-          <Sparkline data={s.spark} accent={true} />
         </div>
-        <div
-          className="absolute bottom-0 left-0 h-[2px] w-full opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-          style={{
-            background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.4), rgba(255,255,255,0.2), transparent)",
-          }}
-        />
       </div>
     </div>
   );
@@ -147,7 +155,24 @@ function Dashboard() {
 
   type Field = { label: string; value: string; mono?: boolean; warn?: boolean; ok?: boolean };
   type CredentialCard = { id: string; url: string; email: string; password: string; telefone?: string; source: string; stolenDate?: string; discoveredDate?: string };
-  type Section = { title: string; icon?: string; collapsible?: boolean; fields?: Field[]; list?: string[]; links?: { label: string; url: string }[]; credentials?: CredentialCard[] };
+  type IpCard = {
+    ip: string;
+    country: string;
+    countryCode: string;
+    region: string;
+    city: string;
+    lat: number;
+    lon: number;
+    timezone: string;
+    isp: string;
+    org: string;
+    asn: string;
+    reverse: string;
+    isProxy: boolean;
+    isDatacenter: boolean;
+    isMobile: boolean;
+  };
+  type Section = { title: string; icon?: string; collapsible?: boolean; fields?: Field[]; list?: string[]; links?: { label: string; url: string }[]; credentials?: CredentialCard[]; ipCards?: IpCard[] };
   type OsintResult = { ok: boolean; tool: string; query: string; summary?: string; sections: Section[]; sources: string[]; error?: string };
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OsintResult | null>(null);
@@ -160,7 +185,7 @@ function Dashboard() {
   const [licenseKey, setLicenseKey] = useState("");
   const [activating, setActivating] = useState(false);
   const [credPage, setCredPage] = useState(1);
-  const [credPageSize, setCredPageSize] = useState(10);
+  const [credPageSize, setCredPageSize] = useState(12);
   const [credFilter, setCredFilter] = useState<string | null>(null);
   const [activateError, setActivateError] = useState("");
   const [activateOk, setActivateOk] = useState(false);
@@ -172,7 +197,8 @@ function Dashboard() {
   const qc = useQueryClient();
 
   const plan = (acc?.subscription as any)?.plans;
-  const limits = { daily: plan?.daily_search_limit ?? 50, monthly: plan?.monthly_result_limit ?? 300 };
+  const isPremium = plan?.id && plan.id !== 'economic';
+  const limits = { daily: plan?.daily_search_limit ?? 5, monthly: plan?.monthly_result_limit ?? 300 };
   const stats = [
     { icon: Search, label: "Buscas hoje", value: String(acc?.today?.searches ?? 0), limit: limits.daily, trend: "+0%", spark: acc?.sparklineSearches?.slice(-11) ?? [0], accent: true },
     { icon: Database, label: "Vazamentos encontrados", value: String(acc?.today?.results ?? 0), limit: undefined, trend: "+0%", spark: acc?.sparklineResults?.slice(-11) ?? [0] },
@@ -234,7 +260,19 @@ function Dashboard() {
 
   function exportJson() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+    const exportData = {
+      ...result,
+      sections: result.sections.map(s => ({
+        ...s,
+        credentials: !isPremium && s.credentials
+          ? s.credentials.slice(0, credPageSize)
+          : s.credentials,
+        ipCards: !isPremium && s.ipCards
+          ? s.ipCards.slice(0, 3)
+          : s.ipCards,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -244,7 +282,9 @@ function Dashboard() {
   }
 
   return (
-    <div className="relative flex min-h-screen bg-transparent text-foreground dashboard-root">
+    <div className="relative flex min-h-screen text-foreground dashboard-root"
+      style={{ background: "linear-gradient(180deg, #0a0e1a 0%, #0d1225 50%, #0a0e1a 100%)", minHeight: "100vh" }}
+    >
       <style>{`
         input:-webkit-autofill,
         input:-webkit-autofill:hover,
@@ -297,8 +337,8 @@ function Dashboard() {
           transform: rotate(-20deg);
         }
       `}</style>
-      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-black" style={{ perspective: "1200px", transformStyle: "preserve-3d" }}>
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(42,143,196,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(42,143,196,0.06)_1px,transparent_1px)] bg-[size:48px_48px] [mask-image:radial-gradient(ellipse_at_top,black_30%,transparent_70%)]" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-[#060a14]" style={{ perspective: "1200px", transformStyle: "preserve-3d" }}>
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(42,143,196,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(42,143,196,0.08)_1px,transparent_1px)] bg-[size:48px_48px] [mask-image:radial-gradient(ellipse_at_top,black_30%,transparent_70%)]" />
         {Array.from({ length: 20 }).map((_, i) => {
           const size = 30 + Math.random() * 80;
           const o1 = 0.1 + Math.random() * 0.2;
@@ -326,62 +366,80 @@ function Dashboard() {
       </div>
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-border bg-card/60 backdrop-blur-xl transition-transform lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <Link to="/" className="group flex items-center gap-2.5">
-            <div className="relative transition group-hover:scale-105">
-              <NoxLogo className="h-14 w-auto" />
-              <span className="absolute -right-1.5 -top-0.5 h-2 w-2 rounded-full bg-primary-glow shadow-glow" />
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-[#2a8fc4]/10 bg-[#060a14]/95 backdrop-blur-3xl transition-transform lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+        style={{ boxShadow: "inset -1px 0 0 rgba(42,143,196,0.08), 4px 0 24px -8px rgba(0,0,0,0.5)" }}
+      >
+        <div className="flex items-center justify-between border-b border-[#2a8fc4]/8 px-5 py-4">
+          <Link to="/" className="group flex items-center gap-3">
+            <div className="relative transition duration-300 group-hover:scale-105">
+              <NoxLogo className="h-12 w-auto" />
+              <span className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full shadow-[0_0_8px_rgba(90,184,224,0.8)]" style={{ background: "#5ab8e0" }} />
             </div>
             <div className="flex flex-col leading-none">
-              <span className="text-sm font-bold tracking-[0.2em]">NOXINTEL</span>
-              <span className="mt-0.5 text-[9px] uppercase tracking-widest text-muted-foreground">OSINT Suite</span>
+              <span className="text-sm font-bold tracking-[0.15em] text-white">NOXINTEL</span>
+              <span className="mt-0.5 text-[8px] font-medium uppercase tracking-[0.15em] text-[#5ab8e0]/40">OSINT Suite</span>
             </div>
           </Link>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden" aria-label="Fechar menu">
-            <X className="h-5 w-5" />
+          <button onClick={() => setSidebarOpen(false)} className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#2a8fc4]/10 text-white/40 transition-colors hover:border-[#2a8fc4]/25 hover:text-white/70 lg:hidden" aria-label="Fechar menu">
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto p-3">
-          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Ferramentas OSINT</p>
+          <p className="px-3 pb-1.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#5ab8e0]/30">Ferramentas</p>
           <div className="space-y-0.5">
             {TOOLS.map(t => {
+              const active = activeTool === t.id;
               return (
                 <button
                   key={t.id}
                   onClick={() => { if (t.soon) return; cancelSearch(); setActiveTool(t.id); setQuery(t.sample); setResult(null); setSidebarOpen(false); }}
-                  className={`inline-flex w-full items-center gap-1.5 whitespace-nowrap ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary hover:opacity-90 px-3 py-2 rounded-full text-white border-0 text-sm font-medium transition-all ${t.soon ? "opacity-50" : ""}`}
-                  style={{ background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 4px 0 rgba(255, 255, 255, 0.07), 0 -2px 0 0 rgba(0, 0, 0, 0.20) inset, 0 1px 0 0 rgba(255, 255, 255, 0.40) inset" }}
+                  disabled={t.soon}
+                  className={`tool-icon tool-icon-fill group relative flex w-full items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-300 ${
+                    active
+                      ? "text-white"
+                      : "text-white/40"
+                  } ${t.soon ? "opacity-30 cursor-not-allowed" : ""}`}
+                  style={active ? {
+                    background: "linear-gradient(135deg, rgba(42,143,196,0.25), rgba(90,184,224,0.08))",
+                    boxShadow: "inset 0 0 0 1px rgba(90,184,224,0.2), 0 0 20px -8px rgba(42,143,196,0.3)",
+                  } : {}}
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                    <t.icon className="h-4.5 w-4.5" />
+                  {active && (
+                    <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full" style={{ background: "#5ab8e0", boxShadow: "0 0 12px rgba(90,184,224,0.6)" }} />
+                  )}
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all duration-300 relative z-10 icon-ring ${
+                    active
+                      ? "text-[#5ab8e0]"
+                      : "text-white/30 group-hover:text-white/50"
+                  }`} style={active ? { background: "rgba(42,143,196,0.15)", boxShadow: "0 0 12px rgba(42,143,196,0.15)" } : {}}>
+                    <t.icon className="h-4 w-4" />
                   </span>
-                  <span className="flex-1 truncate font-medium text-center">{t.label}</span>
+                  <span className="flex-1 truncate text-left font-medium">{t.label}</span>
                   {t.tag && !t.soon && (
-                    <span className="rounded-full bg-primary/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">{t.tag}</span>
+                    <span className="rounded-md bg-[#2a8fc4]/10 border border-[#2a8fc4]/15 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-[#5ab8e0]/60">{t.tag}</span>
                   )}
                   {t.soon && (
-                    <span className="rounded-full border border-secondary/40 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-secondary">Em breve</span>
+                    <span className="rounded-md border border-[#2a8fc4]/10 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-white/30">Em breve</span>
                   )}
                 </button>
               );
             })}
           </div>
 
-          <p className="mt-6 px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Geral</p>
+          <p className="mt-6 px-3 pb-1.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#5ab8e0]/30">Geral</p>
           <div className="space-y-0.5">
-            <Link to="/planos" className="group relative flex w-full items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all duration-200 hover:bg-primary/5 hover:text-foreground">
-              <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/50 transition-all duration-200 group-hover:bg-primary/10 group-hover:text-primary">
-                <CreditCard className="h-4.5 w-4.5" />
+            <Link to="/planos" className="group relative flex w-full items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-sm font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:bg-[#2a8fc4]/5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/30 transition-all duration-300 group-hover:text-white/50">
+                <CreditCard className="h-4 w-4" />
               </span>
-              <span className="flex-1 truncate text-center">Planos & Pix</span>
+              <span className="flex-1 truncate text-left font-medium">Planos & Pagamento</span>
             </Link>
-            <Link to="/conta" className="group relative flex w-full items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all duration-200 hover:bg-primary/5 hover:text-foreground">
-              <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/50 transition-all duration-200 group-hover:bg-primary/10 group-hover:text-primary">
-                <Settings className="h-4.5 w-4.5" />
+            <Link to="/conta" className="group relative flex w-full items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-sm font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:bg-[#2a8fc4]/5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/30 transition-all duration-300 group-hover:text-white/50">
+                <Settings className="h-4 w-4" />
               </span>
-              <span className="flex-1 truncate text-center">Minha conta</span>
+              <span className="flex-1 truncate text-left font-medium">Minha conta</span>
             </Link>
             <button
               onClick={async () => {
@@ -389,115 +447,150 @@ function Dashboard() {
                 clearToken();
                 window.location.href = "/";
               }}
-              className="group relative flex w-full items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all duration-200 hover:bg-primary/5 hover:text-foreground"
+              className="group relative flex w-full items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-sm font-medium text-white/40 transition-all duration-300 hover:text-[#f87171] hover:bg-[#f87171]/5"
             >
-              <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/50 transition-all duration-200 group-hover:bg-primary/10 group-hover:text-primary">
-                <LogOut className="h-4.5 w-4.5" />
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/30 transition-all duration-300 group-hover:text-[#f87171]">
+                <LogOut className="h-4 w-4" />
               </span>
-              <span className="flex-1 truncate text-center">Sair</span>
+              <span className="flex-1 truncate text-left font-medium">Sair</span>
             </button>
           </div>
         </nav>
 
-        <div className="border-t border-white/10 p-4">
-          <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-b from-gray-900/80 via-gray-950/90 to-gray-900/80 p-4">
-            <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-primary/20 blur-2xl" />
-            <div className="relative">
-              {acc?.subscription ? (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-primary" />
-                    <p className="text-xs font-semibold tracking-wide text-white">{(acc.subscription as any).plans?.name || "Plano"}</p>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-400">Buscas: <span className="font-medium text-white">{acc.today.searches}</span> / {(acc.subscription as any).plans?.daily_search_limit || "—"}</p>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/5">
-                    <div className="h-full rounded-full bg-gradient-to-r from-primary/50 to-primary/70"
-                      style={{ width: `${Math.min((acc.today.searches / ((acc.subscription as any).plans?.daily_search_limit || 1)) * 100, 100)}%` }}
-                    />
-                  </div>
-                  <button className="mt-3 w-full rounded-full bg-gradient-to-b from-primary to-primary/80 py-2 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(99,102,241,0.35),inset_0_1px_0_rgba(255,255,255,0.15),inset_0_-2px_0_rgba(0,0,0,0.2)] transition-all duration-200 hover:opacity-90 hover:shadow-[0_8px_24px_rgba(99,102,241,0.5),inset_0_1px_0_rgba(255,255,255,0.2),inset_0_-2px_0_rgba(0,0,0,0.2)] active:scale-[0.98]">
-                    Fazer upgrade
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-primary" />
-                    <p className="text-xs font-semibold tracking-wide text-white">Sem plano</p>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-400">Ative seu plano para começar</p>
-                  <button onClick={() => setShowActivate(true)} className="mt-3 w-full rounded-full bg-gradient-to-b from-primary to-primary/80 py-2 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(99,102,241,0.35),inset_0_1px_0_rgba(255,255,255,0.15),inset_0_-2px_0_rgba(0,0,0,0.2)] transition-all duration-200 hover:opacity-90 hover:shadow-[0_8px_24px_rgba(99,102,241,0.5),inset_0_1px_0_rgba(255,255,255,0.2),inset_0_-2px_0_rgba(0,0,0,0.2)] active:scale-[0.98]">
-                    Ativar plano
-                  </button>
-                </>
-              )}
+        {acc?.subscription ? (
+          <div className="border-t border-[#2a8fc4]/8 p-3">
+            <div className="relative overflow-hidden rounded-xl p-3" style={{ background: "linear-gradient(135deg, rgba(42,143,196,0.15), rgba(90,184,224,0.06))", boxShadow: "inset 0 0 0 1px rgba(90,184,224,0.12), 0 0 20px -8px rgba(42,143,196,0.15)" }}>
+              <div className="absolute -right-8 -top-8 h-16 w-16 rounded-full blur-2xl" style={{ background: "rgba(90,184,224,0.2)" }} />
+              <div className="relative">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3" style={{ color: "#5ab8e0" }} />
+                  <p className="text-xs font-semibold text-white">{(acc.subscription as any).plans?.name || "Plano"}</p>
+                </div>
+                <p className="mt-1 text-[10px] text-white/40">Buscas: <span className="font-medium text-white/80">{acc.today.searches}</span> / {(acc.subscription as any).plans?.daily_search_limit || "—"}</p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                  <div className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min((acc.today.searches / ((acc.subscription as any).plans?.daily_search_limit || 1)) * 100, 100)}%`, background: "linear-gradient(90deg, #2a8fc4, #5ab8e0)" }}
+                  />
+                </div>
+                <button className="mt-2.5 w-full rounded-lg py-1.5 text-[10px] font-semibold text-white transition-all duration-200 active:scale-[0.98]"
+                  style={{ background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)", boxShadow: "0 4px 12px -4px rgba(42,143,196,0.3), inset 0 1px 0 rgba(255,255,255,0.15)" }}
+                >
+                  Fazer upgrade
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="border-t border-[#2a8fc4]/8 p-3">
+            <div className="relative overflow-hidden rounded-xl p-3" style={{ background: "linear-gradient(135deg, rgba(42,143,196,0.15), rgba(90,184,224,0.06))", boxShadow: "inset 0 0 0 1px rgba(90,184,224,0.12), 0 0 20px -8px rgba(42,143,196,0.15)" }}>
+              <div className="absolute -right-8 -top-8 h-16 w-16 rounded-full blur-2xl" style={{ background: "rgba(90,184,224,0.2)" }} />
+              <div className="relative">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3" style={{ color: "#5ab8e0" }} />
+                  <p className="text-xs font-semibold text-white">Sem plano</p>
+                </div>
+                <p className="mt-1 text-[10px] text-white/40">Ative seu plano para começar</p>
+                <button onClick={() => setShowActivate(true)}
+                  className="mt-2.5 w-full rounded-lg py-1.5 text-[10px] font-semibold text-white transition-all duration-200 active:scale-[0.98]"
+                  style={{ background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)", boxShadow: "0 4px 12px -4px rgba(42,143,196,0.3), inset 0 1px 0 rgba(255,255,255,0.15)" }}
+                >
+                  Ativar plano
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </aside>
 
       {sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-background/70 backdrop-blur-sm lg:hidden" />
+        <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden" />
       )}
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Topbar */}
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-background/70 px-5 py-3 backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="lg:hidden" aria-label="Abrir menu">
-              <Menu className="h-5 w-5" />
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[#2a8fc4]/8 bg-[#060a14]/80 px-3 py-2 sm:px-6 sm:py-3 backdrop-blur-3xl"
+          style={{ boxShadow: "0 1px 0 rgba(42,143,196,0.08), 0 4px 24px -8px rgba(0,0,0,0.4)" }}
+        >
+          <div className="flex items-center gap-3 sm:gap-4">
+            <button onClick={() => setSidebarOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#2a8fc4]/10 text-white/50 transition-colors hover:border-[#2a8fc4]/25 hover:text-white/80 lg:hidden" aria-label="Abrir menu">
+              <Menu className="h-4 w-4" />
             </button>
-            <div>
-              <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Painel</p>
-              <h1 className="text-base font-semibold">Bem-vindo de volta, <span className="text-gradient-primary">{acc?.profile?.full_name || acc?.profile?.email?.split("@")[0] || "Analista"}</span></h1>
+            <div className="hidden sm:block">
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-[#5ab8e0]/40">Painel</p>
+              <h1 className="text-base font-semibold text-white">Bem-vindo de volta, <span className="text-gradient-primary">{acc?.profile?.full_name || acc?.profile?.email?.split("@")[0] || "Analista"}</span></h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-
-            <button className="relative rounded-full border border-border bg-card/60 p-2 transition hover:bg-secondary" aria-label="Notificações">
-              <Bell className="h-4 w-4" />
-              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-[#2a8fc4]/10 text-white/40 transition-all hover:border-[#2a8fc4]/25 hover:text-white/70 hover:bg-[#2a8fc4]/5" aria-label="Notificações">
+              <Bell className="h-3.5 w-3.5" />
+              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-[#5ab8e0] shadow-[0_0_8px_rgba(90,184,224,0.8)]" />
             </button>
-            <button className="flex items-center gap-2 rounded-full border border-border bg-card/60 px-2 py-1.5 transition hover:bg-secondary">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-primary text-xs font-bold text-primary-foreground shadow-glow">
-                {(acc?.profile?.full_name || acc?.profile?.email || "N")
-                  .split(" ").map((s: string) => s[0]).join("").slice(0, 2).toUpperCase()}
-              </div>
-              <span className="hidden text-sm font-medium sm:inline">{acc?.profile?.full_name || acc?.profile?.email?.split("@")[0] || "Analista"}</span>
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
+            <div className="relative">
+              <button onClick={() => setShowSettings(s => !s)} className="flex items-center gap-2.5 rounded-lg border border-[#2a8fc4]/10 bg-[#2a8fc4]/5 px-2.5 py-1.5 transition-all hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/10 sm:px-3"
+                style={{ boxShadow: "inset 0 1px 0 rgba(42,143,196,0.1)" }}
+              >
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)", boxShadow: "0 0 12px rgba(42,143,196,0.3)" }}
+                >
+                  {(acc?.profile?.full_name || acc?.profile?.email || "N")
+                    .split(" ").map((s: string) => s[0]).join("").slice(0, 2).toUpperCase()}
+                </div>
+                <div className="hidden text-left sm:block">
+                  <p className="text-[13px] font-medium leading-tight text-white">{acc?.profile?.full_name || acc?.profile?.email?.split("@")[0] || "Analista"}</p>
+                  <p className="text-[9px] text-white/30 leading-tight">{isPremium ? "Premium" : "Gratuito"}</p>
+                </div>
+                <ChevronDown className="h-3 w-3 text-white/30" />
+              </button>
+              {showSettings && (
+                <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-[#2a8fc4]/15 bg-[#0d111c] shadow-xl shadow-black/40">
+                  <Link to="/conta" className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-white/70 transition-colors hover:bg-[#2a8fc4]/10 hover:text-white" onClick={() => setShowSettings(false)}>
+                    <Settings className="h-4 w-4" /> Minha conta
+                  </Link>
+                  <button
+                    onClick={async () => {
+                      const { clearToken } = await import("@/lib/session");
+                      clearToken();
+                      window.location.href = "/";
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-white/70 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                  >
+                    <LogOut className="h-4 w-4" /> Sair
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
-        <main className="flex-1 space-y-6 p-5 lg:p-8">
+        <main className="flex-1 space-y-3 p-3 sm:space-y-6 sm:p-5 lg:p-8">
           {/* Stats */}
-          <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:snap-none sm:gap-5 sm:overflow-visible sm:px-0 sm:pb-0 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="-mx-2 flex snap-x snap-mandatory gap-2 overflow-x-auto px-2 pb-1 sm:mx-0 sm:grid sm:snap-none sm:gap-5 sm:overflow-visible sm:px-0 sm:pb-0 sm:grid-cols-2 lg:grid-cols-4">
             {stats.map((s) => (
               <StatCard key={s.label} s={s} />
             ))}
           </div>
 
           {/* Tool chips */}
-          <div className="flex flex-wrap justify-center gap-2.5">
+          <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2.5">
             {TOOLS.map(t => {
               const active = activeTool === t.id;
               return (
                 <button
                   key={t.id}
                   onClick={() => { if (t.soon) return; cancelSearch(); setActiveTool(t.id); setQuery(t.sample); setResult(null); }}
-                  className={`inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full h-9 px-4 text-xs font-medium transition-all duration-200 [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0 ${
+                  className={`inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg h-8 px-3 text-[10px] font-medium transition-all duration-300 sm:gap-2 sm:h-9 sm:px-4 sm:text-xs ${
                     active
                       ? "text-white border-0"
-                      : "border border-border/60 bg-card/40 text-muted-foreground hover:text-foreground hover:border-primary/30 hover:bg-primary/5"
-                  } ${t.soon ? "opacity-50 cursor-not-allowed" : ""}`}
+                      : "border border-[#2a8fc4]/10 text-white/50 hover:text-white/80 hover:border-[#2a8fc4]/20 hover:bg-[#2a8fc4]/5"
+                  } ${t.soon ? "opacity-40 cursor-not-allowed" : ""}`}
                   style={active ? {
-                    background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)",
-                    boxShadow: "0 0 4px 0 rgba(255, 255, 255, 0.07), 0 -2px 0 0 rgba(0, 0, 0, 0.20) inset, 0 1px 0 0 rgba(255, 255, 255, 0.40) inset",
-                  } : undefined}
+                    background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)",
+                    boxShadow: "0 4px 20px -4px rgba(42,143,196,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset",
+                  } : { background: "rgba(10,15,24,0.6)" }}
                   disabled={t.soon}
                 >
-                  <t.icon className="h-3.5 w-3.5" /> {t.label}
+                  <t.icon className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> {t.label}
                   {t.soon && <span className="text-[9px] uppercase tracking-wider opacity-70">soon</span>}
                 </button>
               );
@@ -506,18 +599,20 @@ function Dashboard() {
 
           {/* Search console */}
           <div className="relative mx-auto w-full max-w-[1200px]">
-            <form className="space-y-3 sm:space-y-4" onSubmit={e => { e.preventDefault(); runSearch(); }}>
+            <form className="space-y-1.5 sm:space-y-4" onSubmit={e => { e.preventDefault(); runSearch(); }}>
               <div className="group relative mx-auto w-full">
                 <div
-                  className="relative flex min-h-[66px] items-center overflow-hidden rounded-2xl border border-primary/20 bg-gradient-card shadow-elevated transition-all duration-300 sm:min-h-[74px] group-focus-within:border-primary/40 group-focus-within:shadow-[0_0_0_1px_rgba(42,143,196,0.2)_inset,0_14px_32px_rgba(0,0,0,0.25)]"
+                  className="relative flex min-h-[50px] items-center overflow-hidden rounded-xl border border-[#2a8fc4]/15 bg-[#0a0f18]/80 shadow-elevated transition-all duration-300 sm:min-h-[74px] group-focus-within:border-[#2a8fc4]/40 group-focus-within:shadow-[0_0_0_1px_rgba(42,143,196,0.25)_inset,0_0_40px_-12px_rgba(42,143,196,0.25),0_14px_32px_rgba(0,0,0,0.3)]"
                   style={{ backdropFilter: "blur(24px)" }}
                 >
-                  <div className="pointer-events-none absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-primary/[0.06] via-primary-glow/[0.03] to-transparent" />
-                  <div className="pointer-events-none absolute inset-y-0 right-0 w-36 bg-gradient-to-l from-primary/[0.05] via-primary-glow/[0.02] to-transparent" />
-                  <div className="pointer-events-none absolute inset-x-16 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
+                  <div className="pointer-events-none absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-[#2a8fc4]/8 via-[#5ab8e0]/3 to-transparent" />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 w-36 bg-gradient-to-l from-[#2a8fc4]/6 via-[#5ab8e0]/2 to-transparent" />
+                  <div className="pointer-events-none absolute inset-x-16 top-0 h-px bg-gradient-to-r from-transparent via-[#2a8fc4]/20 to-transparent" />
 
-                  <div className="relative z-10 ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-card/60 text-muted-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors duration-300 group-focus-within:text-primary sm:ml-4 sm:h-12 sm:w-12">
-                    <Fingerprint className="h-5 w-5 transition-colors duration-200 group-focus-within:text-primary" />
+                  <div className="relative z-10 ml-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#2a8fc4]/15 bg-[#0a0f18]/60 text-muted-foreground shadow-[inset_0_1px_0_rgba(42,143,196,0.1)] transition-colors duration-300 group-focus-within:text-[#5ab8e0] sm:ml-4 sm:h-12 sm:w-12"
+                    style={{ boxShadow: "0 0 12px rgba(42,143,196,0.1)" }}
+                  >
+                    <Fingerprint className="h-4 w-4 transition-colors duration-200 sm:h-5 sm:w-5 group-focus-within:text-[#5ab8e0]" />
                   </div>
 
                   <input
@@ -525,7 +620,7 @@ function Dashboard() {
                     value={query}
                     onChange={e => setQuery(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") runSearch(); }}
-                    className="h-[66px] min-w-0 flex-1 border-0 bg-transparent px-4 pr-[8rem] text-sm font-medium text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-0 focus-visible:ring-0 sm:h-[74px] sm:px-5 sm:pr-[12.25rem] sm:text-base"
+                    className="h-[50px] min-w-0 flex-1 border-0 bg-transparent px-3 pr-[7rem] text-sm font-medium text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-0 focus-visible:ring-0 sm:h-[74px] sm:px-5 sm:pr-[12.25rem] sm:text-base"
                     placeholder={`Digite para buscar em ${tool.label}...`}
                     autoComplete="off"
                   />
@@ -534,18 +629,18 @@ function Dashboard() {
                     <button
                       type="button"
                       onClick={() => setShowSettings(true)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-card/40 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#2a8fc4]/15 bg-[#0a0f18]/40 text-muted-foreground transition-colors hover:bg-[#2a8fc4]/10 hover:text-[#5ab8e0] sm:h-9 sm:w-9 sm:rounded-xl"
                       aria-label="Configure Modules"
                     >
-                      <Settings className="h-4 w-4" />
+                      <Settings className="h-3 w-3 sm:h-4 sm:w-4" />
                     </button>
                     <button
                       type="submit"
                       disabled={busy || tool.soon}
-                      className="group/btn relative inline-flex h-10 items-center justify-center gap-2 overflow-hidden rounded-full px-6 text-sm font-bold uppercase tracking-wider text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
+                      className="group/btn relative inline-flex h-9 items-center justify-center gap-1.5 overflow-hidden rounded-full px-4 text-xs font-bold uppercase tracking-wider text-white transition-all duration-200 active:scale-95 disabled:opacity-50 sm:h-10 sm:gap-2 sm:px-6 sm:text-sm"
                       style={{
                         background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)",
-                        boxShadow: "0 0 4px 0 rgba(255, 255, 255, 0.07), 0 -2px 0 0 rgba(0, 0, 0, 0.20) inset, 0 1px 0 0 rgba(255, 255, 255, 0.40) inset",
+                        boxShadow: "0 0 6px 0 rgba(42,143,196,0.3), 0 -2px 0 0 rgba(0, 0, 0, 0.20) inset, 0 1px 0 0 rgba(255, 255, 255, 0.40) inset, 0 0 24px -4px rgba(42,143,196,0.4)",
                       }}
                     >
                       <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover/btn:translate-x-full" />
@@ -559,13 +654,9 @@ function Dashboard() {
               </div>
 
               {/* Bottom bar */}
-              <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-card shadow-elevated">
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
-                <div className="pointer-events-none absolute inset-x-6 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/10 to-transparent" />
-                <div className="pointer-events-none absolute inset-y-4 left-0 w-px bg-gradient-to-b from-transparent via-primary/20 to-transparent" />
-                <div className="pointer-events-none absolute inset-y-4 right-0 w-px bg-gradient-to-b from-transparent via-primary-glow/15 to-transparent" />
-
-                <div className="relative z-10 space-y-3 px-4 py-3.5 sm:px-5 sm:py-4">
+              <div className="relative overflow-hidden rounded-xl border border-[#2a8fc4]/8">
+                <div className="relative rounded-xl bg-[#060a14]/80 px-4 py-3 sm:px-5 sm:py-4" style={{ boxShadow: "inset 0 0 0 1px rgba(90,184,224,0.06), 0 2px 12px -4px rgba(0,0,0,0.3)" }}>
+                  <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent" />
  
 
                   {/* Email breach status */}
@@ -608,33 +699,35 @@ function Dashboard() {
 
                   {/* Sensitive credential audit */}
                   {activeTool === "email" && (
-                    <div className="relative overflow-hidden rounded-xl border border-primary/15 bg-primary/[0.04] p-4">
-                      <div aria-hidden className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-primary/15 blur-3xl" />
+                    <div className="relative overflow-hidden rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5 sm:p-4"
+                      style={{ boxShadow: "0 2px 12px -4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(42,143,196,0.06)" }}
+                    >
+                      <div aria-hidden className="absolute -right-12 -top-12 h-32 w-32 rounded-full blur-3xl" style={{ background: "rgba(42,143,196,0.12)" }} />
                       <div className="relative mb-3 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(42,143,196,0.6)]" />
-                          <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/90">Auditoria de credencial sensível</span>
+                          <span className="h-1.5 w-1.5 rounded-full shadow-[0_0_8px_rgba(42,143,196,0.6)]" style={{ background: "#5ab8e0" }} />
+                          <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/50">Auditoria de credencial sensível</span>
                         </div>
                         <div className="flex gap-1.5">
-                          <span className="rounded border border-primary/20 bg-background/60 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">HIBP/v3</span>
-                          <span className="rounded border border-primary/20 bg-background/60 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-tighter text-muted-foreground">k-anonymity</span>
+                          <span className="rounded border border-[#2a8fc4]/10 bg-[#2a8fc4]/5 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-[#5ab8e0]/50">HIBP/v3</span>
+                          <span className="rounded border border-[#2a8fc4]/10 bg-[#2a8fc4]/5 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-tighter text-[#5ab8e0]/50">k-anonymity</span>
                         </div>
                       </div>
 
-                      <div className="relative group/pwd flex items-center gap-2 rounded-xl border border-primary/20 bg-background/60 p-1.5 transition focus-within:border-primary/50">
-                        <Lock className="ml-2 h-4 w-4 text-muted-foreground" />
+                      <div className="relative group/pwd flex items-center gap-2 rounded-xl border border-[#2a8fc4]/10 bg-[#2a8fc4]/3 p-1.5 transition focus-within:border-[#2a8fc4]/25">
+                        <Lock className="ml-2 h-4 w-4 text-white/30" />
                         <input
                           type={showPassword ? "text" : "password"}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          className="w-full bg-transparent py-2 font-mono text-sm tracking-tight outline-none placeholder:text-muted-foreground/60"
+                          className="w-full bg-transparent py-2 font-mono text-sm tracking-tight outline-none placeholder:text-white/30 text-white/70"
                           placeholder="Verificar se uma senha vazou (opcional)"
                           autoComplete="off"
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword((v) => !v)}
-                          className="mr-1 rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                          className="mr-1 rounded-md p-1.5 text-white/30 transition hover:bg-[#2a8fc4]/8 hover:text-white/60"
                           aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                         >
                           {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -672,8 +765,8 @@ function Dashboard() {
                         )}
                       </div>
 
-                      <p className="relative mt-3 font-mono text-[10px] text-muted-foreground/60">
-                        <span className="text-primary/70">•</span> A senha nunca é enviada — SHA-1 (5 chars) via HIBP.
+                      <p className="relative mt-3 font-mono text-[9px] text-white/30">
+                        <span className="text-[#5ab8e0]">•</span> A senha nunca é enviada — SHA-1 (5 chars) via HIBP.
                       </p>
                     </div>
                   )}
@@ -684,20 +777,19 @@ function Dashboard() {
 
           {/* Recent searches */}
           {recentSearches.length > 0 && !result && (
-            <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-black/40 backdrop-blur-sm">
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
-              <div className="px-4 py-3 sm:px-5 sm:py-4">
-                <p className="mb-2.5 text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground/70">Buscas recentes</p>
+            <div className="relative overflow-hidden rounded-xl border border-[#2a8fc4]/8 bg-[#060a14]/80">
+              <div className="relative px-4 py-3 sm:px-5 sm:py-4">
+                <p className="mb-2.5 text-[9px] font-bold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Buscas recentes</p>
                 <div className="flex flex-wrap gap-2">
                   {recentSearches.map((s, i) => (
                     <div key={`${s.query}-${s.tool}-${i}`} className="group/pill relative">
                       <button
                         onClick={() => { setQuery(s.query); setActiveTool(s.tool as typeof activeTool); }}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/40 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:border-primary/30 hover:bg-primary/[0.06] hover:text-foreground"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#2a8fc4]/10 bg-[#2a8fc4]/5 px-2.5 py-1.5 text-[10px] font-medium text-white/50 transition hover:border-[#2a8fc4]/20 hover:text-white/80 hover:bg-[#2a8fc4]/10"
                       >
-                        <span className="text-[9px] font-bold text-primary">{TOOLS.find(t => t.id === s.tool)?.label.slice(0, 2).toUpperCase() || "?"}</span>
+                        <span className="text-[8px] font-bold text-[#5ab8e0]">{TOOLS.find(t => t.id === s.tool)?.label.slice(0, 2).toUpperCase() || "?"}</span>
                         <span className="max-w-[140px] truncate">{s.query}</span>
-                        <span className="text-[9px] text-muted-foreground/50">• {new Date(s.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                        <span className="text-[8px] text-white/30">• {new Date(s.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -705,7 +797,7 @@ function Dashboard() {
                           setRecentSearches(updated);
                           localStorage.setItem("recentSearches", JSON.stringify(updated));
                         }}
-                        className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-border/60 bg-background text-[9px] text-muted-foreground opacity-0 transition hover:bg-destructive hover:text-destructive-foreground group-hover/pill:opacity-100"
+                        className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-[#2a8fc4]/15 bg-[#060a14] text-[9px] text-white/30 opacity-0 transition hover:text-red-400 group-hover/pill:opacity-100"
                         aria-label="Remover"
                       >
                         ✕
@@ -720,34 +812,36 @@ function Dashboard() {
           {/* Activate license modal */}
           {showActivate && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => { setShowActivate(false); setActivateError(""); setActivateOk(false); }}>
-              <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
+              <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
               <div
-                className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border/60 bg-gradient-card shadow-elevated"
+                className="relative w-full max-w-sm overflow-hidden rounded-xl border border-[#2a8fc4]/10 bg-[#060a14]"
+                style={{ boxShadow: "0 24px 48px -12px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(42,143,196,0.08), 0 0 60px -20px rgba(42,143,196,0.2)" }}
                 onClick={e => e.stopPropagation()}
               >
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-                <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
+                <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent" />
+                <div className="relative flex items-center justify-between border-b border-[#2a8fc4]/8 px-4 py-3.5">
                   <div className="flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2a8fc4]/15 text-[#5ab8e0]">
                       <Sparkles className="h-4 w-4" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold">Ativar plano</h3>
-                      <p className="text-[10px] text-muted-foreground/70">Insira sua chave de licença</p>
+                      <h3 className="text-sm font-semibold text-white">Ativar plano</h3>
+                      <p className="text-[9px] text-[#5ab8e0]/50">Insira sua chave de licença</p>
                     </div>
                   </div>
-                  <button onClick={() => { setShowActivate(false); setActivateError(""); setActivateOk(false); }} className="flex h-7 w-7 items-center justify-center rounded-full border border-border/60 text-muted-foreground transition hover:bg-secondary hover:text-foreground">
+                  <button onClick={() => { setShowActivate(false); setActivateError(""); setActivateOk(false); }} className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#2a8fc4]/10 text-white/40 transition hover:border-[#2a8fc4]/25 hover:text-white/70">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="p-5">
+                <div className="relative p-4">
                   {activateOk ? (
                     <div className="flex flex-col items-center gap-3 py-6">
                       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
                         <CheckCircle2 className="h-6 w-6" />
                       </div>
                       <p className="text-sm font-semibold text-emerald-400">Plano ativado com sucesso!</p>
-                      <button onClick={() => { setShowActivate(false); setActivateOk(false); window.location.reload(); }} className="rounded-full bg-primary px-6 py-2 text-xs font-bold text-white">
+                      <button onClick={() => { setShowActivate(false); setActivateOk(false); window.location.reload(); }} className="rounded-lg px-6 py-2 text-[10px] font-bold text-white"
+                        style={{ background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)" }}>
                         Fechar
                       </button>
                     </div>
@@ -758,10 +852,10 @@ function Dashboard() {
                         value={licenseKey}
                         onChange={e => setLicenseKey(e.target.value)}
                         placeholder="Cole sua chave aqui..."
-                        className="w-full rounded-xl border border-border/60 bg-background/60 px-4 py-3 text-sm font-mono text-foreground outline-none transition focus:border-primary/50 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/60"
+                        className="w-full rounded-xl border border-[#2a8fc4]/10 bg-[#2a8fc4]/3 px-4 py-3 text-sm font-mono text-white/70 outline-none transition focus:border-[#2a8fc4]/30 focus:shadow-[0_0_20px_-8px_rgba(42,143,196,0.3)] placeholder:text-white/30"
                         autoFocus
                       />
-                      {activateError && <p className="mt-2 text-xs text-destructive">{activateError}</p>}
+                      {activateError && <p className="mt-2 text-xs text-red-400">{activateError}</p>}
                       <button
                         onClick={async () => {
                           if (!licenseKey.trim()) return;
@@ -781,7 +875,8 @@ function Dashboard() {
                           }
                         }}
                         disabled={activating || !licenseKey.trim()}
-                        className="mt-3 w-full rounded-full bg-gradient-to-b from-primary to-primary/80 py-2.5 text-xs font-bold text-white shadow-[0_4px_16px_rgba(99,102,241,0.35),inset_0_1px_0_rgba(255,255,255,0.15),inset_0_-2px_0_rgba(0,0,0,0.2)] transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+                        className="mt-3 w-full rounded-lg py-2.5 text-[10px] font-bold text-white transition-all duration-200 active:scale-[0.98] disabled:opacity-50"
+                        style={{ background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)", boxShadow: "0 4px 14px -2px rgba(42,143,196,0.35), inset 0 1px 0 rgba(255,255,255,0.15)" }}
                       >
                         {activating ? "Ativando..." : "Ativar"}
                       </button>
@@ -795,157 +890,159 @@ function Dashboard() {
           {/* Settings modal */}
           {showSettings && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowSettings(false)}>
-              <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
+              <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
               <div
-                className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-gradient-card shadow-elevated"
+                className="relative w-full max-w-md overflow-hidden rounded-xl border border-[#2a8fc4]/10 bg-[#060a14]"
+                style={{ boxShadow: "0 24px 48px -12px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(42,143,196,0.08), 0 0 60px -20px rgba(42,143,196,0.2)" }}
                 onClick={e => e.stopPropagation()}
               >
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-                <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
+                <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent" />
+                <div className="relative flex items-center justify-between border-b border-[#2a8fc4]/8 px-4 py-3.5">
                   <div className="flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2a8fc4]/15 text-[#5ab8e0]">
                       <Settings className="h-4 w-4" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold">Configurações</h3>
-                      <p className="text-[10px] text-muted-foreground/70">Módulos e preferências</p>
+                      <h3 className="text-sm font-semibold text-white">Configurações</h3>
+                      <p className="text-[9px] text-[#5ab8e0]/50">Módulos e preferências</p>
                     </div>
                   </div>
-                  <button onClick={() => setShowSettings(false)} className="flex h-7 w-7 items-center justify-center rounded-full border border-border/60 text-muted-foreground transition hover:bg-secondary hover:text-foreground">
+                  <button onClick={() => setShowSettings(false)} className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#2a8fc4]/10 text-white/40 transition hover:border-[#2a8fc4]/25 hover:text-white/70">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="space-y-4 p-5">
+                <div className="relative space-y-4 p-4">
                   <div>
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Preferências de busca</p>
+                    <p className="mb-2 text-[9px] font-bold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Preferências de busca</p>
                     <div className="space-y-1.5">
-                      <label className="flex items-center justify-between rounded-lg border border-border/40 bg-background/30 px-4 py-3 transition hover:bg-primary/5 cursor-pointer">
+                      <label className="flex items-center justify-between rounded-lg border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3 transition hover:bg-[#2a8fc4]/6 cursor-pointer">
                         <div className="flex items-center gap-2.5">
-                          <Clock className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs font-medium">Salvar histórico</span>
+                          <Clock className="h-4 w-4 text-[#5ab8e0]/50" />
+                          <span className="text-xs font-medium text-white/60">Salvar histórico</span>
                         </div>
-                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-primary/30 transition-colors">
+                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-[#2a8fc4]/40 transition-colors">
                           <div className="h-3.5 w-3.5 translate-x-1 rounded-full bg-white shadow transition-transform" />
                         </div>
                       </label>
-                      <label className="flex items-center justify-between rounded-lg border border-border/40 bg-background/30 px-4 py-3 transition hover:bg-primary/5 cursor-pointer">
+                      <label className="flex items-center justify-between rounded-lg border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3 transition hover:bg-[#2a8fc4]/6 cursor-pointer">
                         <div className="flex items-center gap-2.5">
-                          <Zap className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs font-medium">Busca automática</span>
+                          <Zap className="h-4 w-4 text-[#5ab8e0]/50" />
+                          <span className="text-xs font-medium text-white/60">Busca automática</span>
                         </div>
-                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-primary/30 transition-colors">
+                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-[#2a8fc4]/30 transition-colors">
                           <div className="h-3.5 w-3.5 translate-x-1 rounded-full bg-white shadow transition-transform" />
                         </div>
                       </label>
                     </div>
                   </div>
                   <div>
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Exibição</p>
+                    <p className="mb-2 text-[9px] font-bold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Exibição</p>
                     <div className="space-y-1.5">
-                      <label className="flex items-center justify-between rounded-lg border border-border/40 bg-background/30 px-4 py-3 transition hover:bg-primary/5 cursor-pointer">
+                      <label className="flex items-center justify-between rounded-lg border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3 transition hover:bg-[#2a8fc4]/6 cursor-pointer">
                         <div className="flex items-center gap-2.5">
-                          <Eye className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs font-medium">Modo compacto</span>
+                          <Eye className="h-4 w-4 text-[#5ab8e0]/50" />
+                          <span className="text-xs font-medium text-white/60">Modo compacto</span>
                         </div>
-                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-muted transition-colors">
+                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-[#2a8fc4]/20 transition-colors">
                           <div className="h-3.5 w-3.5 translate-x-1 rounded-full bg-white shadow transition-transform" />
                         </div>
                       </label>
-                      <div className="flex items-center justify-between rounded-lg border border-border/40 bg-background/30 px-4 py-3">
+                      <div className="flex items-center justify-between rounded-lg border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3">
                         <div className="flex items-center gap-2.5">
-                          <Download className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs font-medium">Formato de exportação</span>
+                          <Download className="h-4 w-4 text-[#5ab8e0]/50" />
+                          <span className="text-xs font-medium text-white/60">Formato de exportação</span>
                         </div>
-                        <select className="rounded-lg border border-border/60 bg-background/60 px-2 py-1 text-xs text-foreground outline-none">
-                          <option>JSON</option>
-                          <option>CSV</option>
-                          <option>PDF</option>
+                        <select className="rounded-lg border border-[#2a8fc4]/10 bg-[#2a8fc4]/5 px-2 py-1 text-xs text-white/70 outline-none">
+                          <option className="bg-[#060a14] text-white">JSON</option>
+                          <option className="bg-[#060a14] text-white">CSV</option>
+                          <option className="bg-[#060a14] text-white">PDF</option>
                         </select>
                       </div>
                     </div>
                   </div>
                   <div>
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Notificações</p>
+                    <p className="mb-2 text-[9px] font-bold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Notificações</p>
                     <div className="space-y-1.5">
-                      <label className="flex items-center justify-between rounded-lg border border-border/40 bg-background/30 px-4 py-3 transition hover:bg-primary/5 cursor-pointer">
+                      <label className="flex items-center justify-between rounded-lg border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3 transition hover:bg-[#2a8fc4]/6 cursor-pointer">
                         <div className="flex items-center gap-2.5">
-                          <Bell className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs font-medium">Alertas de vazamento</span>
+                          <Bell className="h-4 w-4 text-[#5ab8e0]/50" />
+                          <span className="text-xs font-medium text-white/60">Alertas de vazamento</span>
                         </div>
-                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-primary/30 transition-colors">
+                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-[#2a8fc4]/40 transition-colors">
                           <div className="h-3.5 w-3.5 translate-x-1 rounded-full bg-white shadow transition-transform" />
                         </div>
                       </label>
-                      <label className="flex items-center justify-between rounded-lg border border-border/40 bg-background/30 px-4 py-3 transition hover:bg-primary/5 cursor-pointer">
+                      <label className="flex items-center justify-between rounded-lg border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3 transition hover:bg-[#2a8fc4]/6 cursor-pointer">
                         <div className="flex items-center gap-2.5">
-                          <Mail className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs font-medium">Relatório semanal</span>
+                          <Mail className="h-4 w-4 text-[#5ab8e0]/50" />
+                          <span className="text-xs font-medium text-white/60">Relatório semanal</span>
                         </div>
-                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-muted transition-colors">
+                        <div className="relative flex h-5 w-9 cursor-pointer items-center rounded-full bg-[#2a8fc4]/20 transition-colors">
                           <div className="h-3.5 w-3.5 translate-x-1 rounded-full bg-white shadow transition-transform" />
                         </div>
                       </label>
                     </div>
                   </div>
                 </div>
-                <div className="border-t border-border/60 bg-background/30 px-5 py-3">
-                  <p className="text-center text-[10px] text-muted-foreground/60">As configurações são salvas automaticamente.</p>
+                <div className="relative border-t border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-4 py-3">
+                  <p className="text-center text-[9px] text-[#5ab8e0]/40">As configurações são salvas automaticamente.</p>
                 </div>
               </div>
             </div>
           )}
 
           {/* Results panel */}
-          <section className="relative overflow-hidden rounded-3xl border border-primary/20 bg-gradient-card shadow-elevated">
-            <div className="relative p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <section className="relative overflow-hidden rounded-2xl border border-[#2a8fc4]/8">
+            <div style={{ boxShadow: "inset 0 0 0 1px rgba(42,143,196,0.06), 0 2px 12px -4px rgba(0,0,0,0.3)" }} className="relative rounded-2xl bg-[#060a14]/80 p-4 sm:p-5">
+              <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent" />
+              <div className="relative flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">Resultados</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${busy ? "bg-primary/20 text-primary" : result ? (result.ok ? "bg-emerald-500/15 text-emerald-400" : "bg-destructive/15 text-destructive") : "bg-secondary text-muted-foreground"}`}>
+                  <span className="text-sm font-medium text-white">Resultados</span>
+                  <span className={`rounded-md px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${busy ? "bg-[#2a8fc4]/20 text-[#5ab8e0]" : result ? (result.ok ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400") : "bg-[#2a8fc4]/8 text-[#5ab8e0]/40"}`}>
                     {busy ? "buscando" : result ? (result.ok ? "concluído" : "erro") : "aguardando"}
                   </span>
                 </div>
                 <button
                   onClick={exportJson}
                   disabled={!result}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border/60 bg-card/40 h-8 px-4 text-xs font-medium text-muted-foreground transition-all duration-200 hover:text-foreground hover:border-primary/30 hover:bg-primary/5 disabled:opacity-50 disabled:pointer-events-none"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2a8fc4]/10 h-8 px-3 text-[10px] font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/5 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Download className="h-3 w-3" /> Exportar
                 </button>
               </div>
 
               {!result && !busy && (
-                    <div className="mt-3 flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-primary/20 bg-background/30 px-6 py-10 text-center">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <div className="relative mt-3 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#2a8fc4]/10 bg-[#2a8fc4]/3 px-6 py-10 text-center">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2a8fc4]/15 text-[#5ab8e0]">
                     <Search className="h-4 w-4" />
                   </div>
-                  <p className="text-sm font-medium">Nenhuma busca realizada</p>
-                  <p className="text-xs text-muted-foreground">Digite um termo acima e clique em Buscar para começar.</p>
+                  <p className="text-sm font-medium text-white/70">Nenhuma busca realizada</p>
+                  <p className="text-xs text-[#5ab8e0]/40">Digite um termo acima e clique em Buscar para começar.</p>
                 </div>
               )}
 
               {busy && (
-                <div className="mt-3 flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-primary/20 bg-background/30 px-6 py-10 text-center">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  <p className="text-sm text-muted-foreground">Consultando fontes públicas...</p>
+                <div className="relative mt-3 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#2a8fc4]/10 bg-[#2a8fc4]/3 px-6 py-10 text-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-[#5ab8e0]" />
+                  <p className="text-sm text-white/50">Consultando fontes públicas...</p>
                 </div>
               )}
 
               {result && !result.ok && (
-                <div className="mt-3 rounded-2xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+                <div className="relative mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
                   <p className="flex items-center gap-2 font-semibold">
                     <AlertTriangle className="h-4 w-4" /> Falha na busca
                   </p>
-                  <p className="mt-1 text-destructive/80">{result.error}</p>
+                  <p className="mt-1 text-red-400/80">{result.error}</p>
                 </div>
               )}
 
               {result && result.ok && (
-                <div className="mt-3 space-y-4">
+                <div className="relative mt-3 space-y-4">
                   {result.summary && (
-                    <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
-                      <p className="text-[10px] uppercase tracking-wider text-primary">Resumo</p>
-                      <p className="mt-1 text-sm font-medium">{result.summary}</p>
+                    <div className="rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5">
+                      <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Resumo</p>
+                      <p className="mt-1 truncate text-sm font-medium text-white/80">{result.summary}</p>
                     </div>
                   )}
                   {(() => {
@@ -954,30 +1051,87 @@ function Dashboard() {
                     return (
                       <>
                         {regular.map(({ s: sec, i }) => (
-                          <div key={i} className="rounded-2xl border border-primary/15 bg-background/40 p-4">
-                            <h4 className="mb-3 text-sm font-semibold">{sec.title}</h4>
+                          <div key={i} className="rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5 sm:p-4">
+                            <h4 className="mb-3 text-sm font-semibold text-white/80">{sec.title}</h4>
                             {sec.fields && sec.fields.length > 0 && (
                               <dl className="grid gap-2 sm:grid-cols-2">
-                                {sec.fields.map((f, j) => (
-                                  <div key={j} className="flex flex-col rounded-lg border border-primary/15 bg-card/40 p-2.5">
-                                    <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">{f.label}</dt>
-                                    <dd className={`mt-0.5 break-all text-sm ${f.mono ? "font-mono" : ""} ${f.warn ? "text-destructive" : ""} ${f.ok ? "text-emerald-400" : ""}`}>{f.value}</dd>
+                                {sec.fields.map((f, j) => {
+                                  const isSensitive = !isPremium && (f.label === "CPF" || f.label.startsWith("Nome"));
+                                  return (
+                                  <div key={j} className={`flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5 ${isSensitive ? "relative overflow-hidden" : ""}`}>
+                                    <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">{f.label}</dt>
+                                    <dd className={`mt-0.5 break-all text-sm text-white/80 ${f.mono ? "font-mono" : ""} ${f.warn ? "text-red-400" : ""} ${f.ok ? "text-emerald-400" : ""} ${isSensitive ? "blur-sm select-none" : ""}`}>{isSensitive ? "••••••••••••" : f.value}</dd>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </dl>
                             )}
-                            {sec.list && sec.list.length > 0 && (
-                              <ul className="space-y-1.5 text-sm">
-                                {sec.list.map((it, j) => (
-                                  <li key={j} className="flex gap-2 break-all rounded-md bg-card/30 px-2.5 py-1.5 font-mono text-xs">
-                                    <span className="text-muted-foreground">•</span>{it}
-                                  </li>
-                                ))}
-                              </ul>
+                              {sec.list && sec.list.length > 0 && (
+                              <div className="space-y-3 text-sm">
+                                {(() => {
+                                  const groups: { header: string; items: string[] }[] = [];
+                                  let current: string[] = [];
+                                  sec.list.forEach((it) => {
+                                    if (it.startsWith("━━━")) {
+                                      if (current.length) groups.push({ header: "", items: current });
+                                      current = [];
+                                      groups.push({ header: it, items: current });
+                                    } else if (it.startsWith("── ") || it.startsWith("───")) {
+                                      current = [];
+                                      groups.push({ header: "", items: [it] });
+                                    } else {
+                                      groups.length ? groups[groups.length - 1].items.push(it) : current.push(it);
+                                    }
+                                  });
+                                  if (current.length) groups.push({ header: "", items: current });
+                                  return groups.map((g, gi) => (
+                                    <div key={gi}>
+                                      {g.header && (
+                                        <div className="mb-2 flex items-center gap-2">
+                                          <div className="h-px flex-1 bg-[#2a8fc4]/10" />
+                                          <span className="shrink-0 text-[8px] font-bold uppercase tracking-[0.15em] text-[#5ab8e0]/50">{g.header.replace(/━━━/g, "").trim()}</span>
+                                          <div className="h-px flex-1 bg-[#2a8fc4]/10" />
+                                        </div>
+                                      )}
+                                      <ul className={gi > 0 ? "space-y-1" : "space-y-1"}>
+                                        {g.items.map((it, j) => {
+                                          const parts = it.match(/^── (.+) ──$/);
+                                          if (parts) {
+                                            return (
+                                              <li key={j} className="mt-2 flex items-center gap-2">
+                                                <div className="h-px flex-1 bg-[#2a8fc4]/10" />
+                                                <span className="shrink-0 text-[8px] font-semibold uppercase tracking-wider text-[#5ab8e0]/40">{parts[1]}</span>
+                                                <div className="h-px flex-1 bg-[#2a8fc4]/10" />
+                                              </li>
+                                            );
+                                          }
+                                          const colonIdx = it.indexOf(":");
+                                          if (colonIdx > 0 && colonIdx < 30) {
+                                            const label = it.slice(0, colonIdx);
+                                            const value = it.slice(colonIdx + 1).trim();
+                                            return (
+                                              <li key={j} className="flex gap-2 rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 px-3 py-1.5 font-mono text-xs text-white/70">
+                                                <span className="shrink-0 text-white/30">{label}:</span>
+                                                <span className="break-all text-white/80">{value}</span>
+                                              </li>
+                                            );
+                                          }
+                                          return (
+                                            <li key={j} className="flex gap-2 rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 px-3 py-1.5 font-mono text-xs text-white/70">
+                                              <span className="shrink-0 text-white/30">•</span>
+                                              <span className="break-all text-white/70">{it}</span>
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    </div>
+                                  ));
+                                })()}
+                              </div>
                             )}
                             {sec.credentials && sec.credentials.length > 0 && (
                               (() => {
-                                const rootHost = (u: string) => { try { const h = new URL(u).hostname; const p = h.split('.'); const m = ['com.br','org.br','net.br','gov.br','edu.br','mil.br','co.uk','co.jp','com.au','com.cn']; return p.length >= 3 && m.includes(p.slice(-2).join('.')) ? p.slice(-3).join('.') : p.slice(-2).join('.'); } catch { return u; } };
+                                const rootHost = (u: string) => { try { const h = new URL(/^https?:\/\//i.test(u) ? u : 'https://' + u).hostname; const p = h.split('.'); const m = ['com.br','org.br','net.br','gov.br','edu.br','mil.br','co.uk','co.jp','com.au','com.cn']; return p.length >= 3 && m.includes(p.slice(-2).join('.')) ? p.slice(-3).join('.') : p.slice(-2).join('.'); } catch { try { const h = new URL('https://' + u.replace(/^[^:]+:\/\//, '')).hostname; const p = h.split('.'); const m = ['com.br','org.br','net.br','gov.br','edu.br','mil.br','co.uk','co.jp','com.au','com.cn']; return p.length >= 3 && m.includes(p.slice(-2).join('.')) ? p.slice(-3).join('.') : p.slice(-2).join('.'); } catch { return u; } } };
                                 const domains = [...new Set(sec.credentials.map(c => rootHost(c.url)))].sort();
                                 const filtered = credFilter ? sec.credentials.filter(c => rootHost(c.url) === credFilter) : sec.credentials;
                                 const total = filtered.length;
@@ -986,136 +1140,150 @@ function Dashboard() {
                                 const start = (safePage - 1) * credPageSize;
                                 const end = Math.min(start + credPageSize, total);
                                 const pageItems = filtered.slice(start, end);
+                                const visibleLimit = isPremium ? Infinity : safePage === 1 ? credPageSize : 0;
                                 return (
                                   <>
                                     {domains.length > 1 && (
-                                      <div className="mt-6 flex flex-wrap items-center gap-1.5">
-                                        <button onClick={() => { setCredFilter(null); setCredPage(1); }} className={`rounded-lg border px-2 py-1 text-[10px] font-medium transition ${credFilter === null ? 'bg-primary/15 border-primary/30 text-primary' : 'border-border/60 text-muted-foreground hover:border-primary/30 hover:text-foreground'}`}>Todos</button>
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <button onClick={() => { setCredFilter(null); setCredPage(1); }} className={`rounded-lg border px-2 py-1 text-[9px] font-medium transition ${credFilter === null ? 'border-[#5ab8e0]/30 text-[#5ab8e0] bg-[#2a8fc4]/15' : 'border-[#2a8fc4]/10 text-white/40 hover:text-white/70 hover:border-[#2a8fc4]/25'}`}>Todos</button>
                                         {domains.map(d => (
-                                          <button key={d} onClick={() => { setCredFilter(d); setCredPage(1); }} className={`rounded-lg border p-1.5 transition ${credFilter === d ? 'bg-primary/15 border-primary/30 text-primary' : 'border-border/60 text-muted-foreground hover:border-primary/30 hover:text-foreground'}`} title={d}>
+                                          <button key={d} onClick={() => { setCredFilter(d); setCredPage(1); }} className={`rounded-lg border p-1.5 transition ${credFilter === d ? 'border-[#5ab8e0]/30 bg-[#2a8fc4]/15' : 'border-[#2a8fc4]/10 hover:border-[#2a8fc4]/25'}`} title={d}>
                                             <img src={`https://www.google.com/s2/favicons?domain=${d}&sz=16`} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
                                           </button>
                                         ))}
                                       </div>
                                     )}
-                                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                    <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-3 lg:grid-cols-3">
                                       {pageItems.map((cred, j) => {
                                         const hostname = (() => { try { return new URL(cred.url).hostname; } catch { return cred.url; } })();
                                         const rootDomain = rootHost(cred.url);
                                         return (
-                                          <div key={j} className="group relative overflow-hidden rounded-xl border border-primary/30 text-white backdrop-blur-xl transition-all duration-200"
-                                            style={{background: "linear-gradient(rgba(42,143,196,0.15) 49.18%, rgba(90,184,224,0.1) 113.93%)", boxShadow: "0 0 4px 0 rgba(255,255,255,0.07), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset"}}
+                                          <div key={j} className="group relative overflow-hidden rounded-xl border border-[#2a8fc4]/10 text-white transition-all duration-300 hover:border-[#2a8fc4]/20"
+                                            style={{background: "rgba(10,15,24,0.9)", boxShadow: "0 4px 20px -4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(42,143,196,0.06)"}}
                                           >
+                                             {j >= visibleLimit && (
+                                               <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 backdrop-blur-sm">
+                                                 <span className="text-[10px] font-medium text-white/60">Desbloqueie com</span>
+                                                  <a href="/planos" className="inline-flex items-center justify-center rounded-full px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white transition-all duration-200 active:scale-95"
+                                                    style={{background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 6px 0 rgba(42,143,196,0.3), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset, 0 0 24px -4px rgba(42,143,196,0.4)"}}
+                                                 >COMPRAR PLANO</a>
+                                               </div>
+                                             )}
                                             <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-                                            <div className="relative flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2.5">
-                                              <span className="rounded bg-[#0a0a0f]/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white/90 backdrop-blur-xl">STEALER LOG</span>
+                                              <div className="relative flex flex-wrap items-center gap-1 border-b border-[#2a8fc4]/10 px-2.5 py-2 sm:gap-2 sm:px-4 sm:py-2.5">
+                                                <span className="rounded bg-[#0a0a0f]/80 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white/90 backdrop-blur-xl sm:px-2 sm:text-[10px]">STEALER LOG</span>
                                               <img src={`https://www.google.com/s2/favicons?domain=${rootDomain}&sz=16`} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
                                               <div className="ml-auto flex items-center gap-1.5">
                                                 <span className="font-mono text-[10px] text-white/60">#{cred.id.slice(0, 8)}</span>
-                                                <button onClick={() => navigator.clipboard.writeText(cred.id)} className="rounded p-1 text-white/60 transition hover:text-white" title="Copy ID">
+                                                 <button onClick={() => navigator.clipboard.writeText(cred.id)} className="hidden rounded p-1 text-white/60 transition hover:text-white sm:block" title="Copy ID">
                                                   <Copy className="h-3 w-3" />
                                                 </button>
                                               </div>
                                             </div>
                                             {cred.stolenDate || cred.discoveredDate ? (
-                                              <div className="relative flex flex-wrap gap-2 px-4 py-2">
-                                                {cred.stolenDate && (
-                                                  <span className="inline-flex items-center gap-1 rounded-full border border-white/20 px-2.5 py-0.5 text-[10px] text-white/70">
-                                                    <Clock className="h-3 w-3" /> Stolen {cred.stolenDate}
-                                                  </span>
-                                                )}
-                                                {cred.discoveredDate && (
-                                                  <span className="inline-flex items-center gap-1 rounded-full border border-white/20 px-2.5 py-0.5 text-[10px] text-white/70">
-                                                    <Shield className="h-3 w-3" /> Discovered {cred.discoveredDate}
-                                                  </span>
-                                                )}
-                                              </div>
+<div className="relative hidden flex-wrap gap-1.5 px-2 py-1 sm:flex sm:gap-2 sm:px-4 sm:py-2">
+                                                  {cred.stolenDate && (
+                                                    <span className="inline-flex items-center gap-1 rounded-full border border-[#2a8fc4]/15 px-2.5 py-0.5 text-[10px] text-white/70">
+                                                      <Clock className="h-3 w-3" /> Stolen {cred.stolenDate}
+                                                    </span>
+                                                  )}
+                                                  {cred.discoveredDate && (
+                                                    <span className="inline-flex items-center gap-1 rounded-full border border-[#2a8fc4]/15 px-2.5 py-0.5 text-[10px] text-white/70">
+                                                      <Shield className="h-3 w-3" /> Discovered {cred.discoveredDate}
+                                                    </span>
+                                                  )}
+                                               </div>
                                             ) : null}
-                                            <div className="relative flex items-center gap-2 px-4 py-1.5 normal-case">
-                                              <ArrowUpRight className="h-3 w-3 shrink-0 text-white/70" />
+                                             <div className="relative flex items-center gap-1.5 px-2.5 py-1 normal-case sm:gap-2 sm:px-4 sm:py-1.5">
+                                               <ArrowUpRight className="hidden sm:block h-3 w-3 shrink-0 text-white/70" />
                                               <a href={cred.url} target="_blank" rel="noopener noreferrer" className="truncate font-mono text-xs text-white/90 underline underline-offset-2 decoration-white/30 hover:decoration-white/60">{cred.url}</a>
                                             </div>
-                                            <div className="relative grid gap-2 px-4 pb-3 pt-1 sm:grid-cols-3">
-                                              <div className="rounded-lg border border-white/10 bg-[#0a0a0f]/80 p-2.5 backdrop-blur-xl">
-                                                <div className="flex items-center gap-1.5 text-[10px] tracking-wider text-white/60 normal-case">
-                                                  <User className="h-3 w-3" /> email / login
+                                             <div className="relative flex flex-col gap-0.5 px-2 pb-2 pt-1 sm:grid sm:grid-cols-3 sm:gap-2 sm:px-4 sm:pb-3">
+                                                <div className="flex cursor-pointer items-center gap-1.5 rounded-md bg-[#0a0a0f]/60 px-2 py-1.5 sm:hidden" onClick={() => navigator.clipboard.writeText(cred.email)}>
+                                                  <User className="h-3.5 w-3.5 shrink-0 text-white/60" />
+                                                  <span className="truncate font-mono text-[10px] text-white/90">{cred.email}</span>
                                                 </div>
-                                                <div className="mt-1 flex items-center justify-between gap-2">
-                                                  <span className="break-all font-mono text-xs text-white/90">{cred.email}</span>
-                                                  <button onClick={() => navigator.clipboard.writeText(cred.email)} className="shrink-0 rounded p-1 text-white/60 transition hover:text-white" title="Copy">
-                                                    <Copy className="h-3 w-3" />
-                                                  </button>
+                                                <div className="flex cursor-pointer items-center gap-1.5 rounded-md bg-[#0a0a0f]/60 px-2 py-1.5 sm:hidden" onClick={() => navigator.clipboard.writeText(cred.password)}>
+                                                  <Key className="h-3.5 w-3.5 shrink-0 text-white/60" />
+                                                  <span className="truncate font-mono text-[10px] text-white/90">{cred.password}</span>
                                                 </div>
-                                              </div>
-                                              <div className="rounded-lg border border-white/10 bg-[#0a0a0f]/80 p-2.5 backdrop-blur-xl">
-                                                <div className="flex items-center gap-1.5 text-[10px] tracking-wider text-white/60 normal-case">
-                                                  <Key className="h-3 w-3" /> password
-                                                </div>
-                                                <div className="mt-1 flex items-center justify-between gap-2">
-                                                  <span className="break-all font-mono text-xs text-white/90">{cred.password}</span>
-                                                  <button onClick={() => navigator.clipboard.writeText(cred.password)} className="shrink-0 rounded p-1 text-white/60 transition hover:text-white" title="Copy">
-                                                    <Copy className="h-3 w-3" />
-                                                  </button>
-                                                </div>
-                                              </div>
-                                              <div className="rounded-lg border border-white/10 bg-[#0a0a0f]/80 p-2.5 backdrop-blur-xl">
-                                                <div className="flex items-center gap-1.5 text-[10px] tracking-wider text-white/60 normal-case">
-                                                  <Globe2 className="h-3 w-3" /> {cred.telefone ? "telefone" : "subdomain"}
-                                                </div>
-                                                <div className="mt-1 flex items-center justify-between gap-2">
-                                                  <span className="break-all font-mono text-xs text-white/90">{cred.telefone || hostname}</span>
-                                                  <button onClick={() => navigator.clipboard.writeText(cred.telefone || hostname)} className="shrink-0 rounded p-1 text-white/60 transition hover:text-white" title="Copy">
-                                                    <Copy className="h-3 w-3" />
-                                                  </button>
-                                                </div>
-                                              </div>
-                                            </div>
+  <div className="hidden rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/80 p-1 backdrop-blur-xl sm:flex sm:flex-col sm:p-2.5">
+                                                    <span className="text-[9px] tracking-wider text-white/60 sm:flex sm:items-center sm:gap-1.5 sm:text-[10px] sm:normal-case">
+                                                      <User className="hidden sm:inline h-3 w-3" /> <span className="sm:inline">email</span>
+                                                   </span>
+                                                      <span className="truncate font-mono text-[9px] text-white/90 sm:break-all sm:text-xs">{cred.email}</span>
+                                                     <button onClick={() => navigator.clipboard.writeText(cred.email)} className="hidden shrink-0 rounded p-1 text-white/60 transition hover:text-white sm:flex" title="Copy">
+                                                       <Copy className="h-3 w-3" />
+                                                     </button>
+  </div>
+  <div className="hidden rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/80 p-1 backdrop-blur-xl sm:flex sm:flex-col sm:p-2.5">
+                                                    <span className="text-[9px] tracking-wider text-white/60 sm:flex sm:items-center sm:gap-1.5 sm:text-[10px] sm:normal-case">
+                                                      <Key className="hidden sm:inline h-3 w-3" /> <span className="sm:inline">pass</span>
+                                                   </span>
+                                                      <span className="truncate font-mono text-[9px] text-white/90 sm:break-all sm:text-xs">{cred.password}</span>
+                                                      <button onClick={() => navigator.clipboard.writeText(cred.password)} className="hidden shrink-0 rounded p-1 text-white/60 transition hover:text-white sm:flex" title="Copy">
+                                                       <Copy className="h-3 w-3" />
+                                                     </button>
+  </div>
+  <div className="hidden rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/80 p-1 backdrop-blur-xl sm:flex sm:flex-col sm:p-2.5">
+                                                   <span className="text-[9px] tracking-wider text-white/60 sm:flex sm:items-center sm:gap-1.5 sm:text-[10px] sm:normal-case">
+                                                     <Globe2 className="hidden sm:inline h-3 w-3" /> <span className="sm:inline">{cred.telefone ? "tel" : "sub"}</span>
+                                                  </span>
+                                                     <span className="truncate font-mono text-[9px] text-white/90 sm:break-all sm:text-xs">{cred.telefone || hostname}</span>
+                                                     <button onClick={() => navigator.clipboard.writeText(cred.telefone || hostname)} className="hidden shrink-0 rounded p-1 text-white/60 transition hover:text-white sm:flex" title="Copy">
+                                                      <Copy className="h-3 w-3" />
+                                                    </button>
+ </div>
+                                             </div>
                                           </div>
                                         );
                                       })}
                                     </div>
-                                     {total > credPageSize && (
-                                      <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-primary/30 px-3 py-3 text-white sm:flex-row sm:items-center sm:justify-between"
-                                        style={{background: "linear-gradient(#2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 4px 0 rgba(255,255,255,0.07), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset"}}>
-                                        <div className="flex min-w-0 flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[12px] text-white/60 sm:justify-start sm:text-[13px]">
-                                          <span className="font-medium text-white/90 tabular-nums">{start + 1}-{end}</span>
-                                          <span>de</span>
-                                          <span className="font-medium text-white/90 tabular-nums">{total}</span>
-                                          <span>mostrados</span>
-                                        </div>
+                                      {total > credPageSize && (
+                                      <div className="flex flex-col gap-3 rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                                        style={{ boxShadow: "inset 0 0 0 1px rgba(42,143,196,0.06)" }}>
+                                        <div className="flex items-center gap-2 text-[12px] sm:text-[13px]">
+                                           <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#2a8fc4]/8 px-2.5 py-1 font-medium text-white/70">
+                                             <span className="tabular-nums text-white/90">{start + 1}&ndash;{end}</span>
+                                             <span className="text-white/30">/</span>
+                                             <span className="tabular-nums text-white/90">{total}</span>
+                                           </span>
+                                           <span className="hidden text-white/30 sm:inline">resultados</span>
+                                         </div>
                                         <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end">
-                                          <div className="flex h-9 items-center overflow-hidden rounded-xl border border-white/15 bg-white/10 text-[12px] text-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] sm:text-[13px]">
-                                            <span className="px-2">Mostrar</span>
-                                            <select value={credPageSize} onChange={e => { setCredPageSize(Number(e.target.value)); setCredPage(1); }} className="h-full w-[4.75rem] border-l border-white/15 bg-white/5 px-2 text-[12px] text-white outline-none transition-colors sm:text-sm focus:border-white/50" aria-label="Linhas por página">
-                                              <option value={5} className="bg-black text-white">5</option>
-                                              <option value={10} className="bg-black text-white">10</option>
-                                              <option value={25} className="bg-black text-white">25</option>
-                                              <option value={50} className="bg-black text-white">50</option>
-                                              <option value={100} className="bg-black text-white">100</option>
+                                          <div className="flex h-9 items-center overflow-hidden rounded-lg border border-[#2a8fc4]/10 bg-[#2a8fc4]/3 text-[12px] text-white/50 sm:text-[13px]">
+                                            <span className="px-2 text-[#5ab8e0]/40">Mostrar</span>
+                                            <select value={credPageSize} onChange={e => { setCredPageSize(Number(e.target.value)); setCredPage(1); }} className="h-full w-[4.75rem] border-l border-[#2a8fc4]/10 bg-[#2a8fc4]/5 px-2 text-[12px] text-white/70 outline-none transition-colors sm:text-sm focus:text-white" aria-label="Linhas por página">
+<option value={5} className="bg-[#060a14] text-white">5</option>
+                                                <option value={10} className="bg-[#060a14] text-white">10</option>
+                                                <option value={12} className="bg-[#060a14] text-white">12</option>
+                                                <option value={25} className="bg-[#060a14] text-white">25</option>
+                                               <option value={50} className="bg-[#060a14] text-white">50</option>
+                                               <option value={100} className="bg-[#060a14] text-white">100</option>
                                             </select>
                                           </div>
                                           {totalPages > 1 && (
-                                            <div className="flex h-9 items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
-                                              <button disabled={safePage === 1} onClick={() => setCredPage(1)} className="inline-flex items-center justify-center h-7 w-7 rounded-lg text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed" aria-label="Primeira página">
+                                            <div className="flex h-9 items-center gap-1 rounded-lg border border-[#2a8fc4]/10 bg-[#2a8fc4]/3 px-1">
+                                              <button disabled={safePage === 1} onClick={() => setCredPage(1)} className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/40 hover:bg-[#2a8fc4]/10 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Primeira página">
                                                 <ChevronsLeft className="h-3.5 w-3.5" />
                                               </button>
-                                              <button disabled={safePage === 1} onClick={() => setCredPage(x => Math.max(1, x - 1))} className="inline-flex items-center justify-center h-7 w-7 rounded-lg text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed" aria-label="Página anterior">
+                                              <button disabled={safePage === 1} onClick={() => setCredPage(x => Math.max(1, x - 1))} className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/40 hover:bg-[#2a8fc4]/10 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Página anterior">
                                                 <ChevronLeft className="h-3.5 w-3.5" />
                                               </button>
                                               <div className="hidden sm:flex items-center gap-1">
                                                 {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
-                                                  <button key={n} onClick={() => setCredPage(n)} className={`inline-flex items-center justify-center h-7 min-w-7 rounded-lg border-0 px-2 text-xs font-semibold tabular-nums ${n === safePage ? 'text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] bg-white/20' : 'text-white/60 hover:bg-white/10 hover:text-white'}`} aria-label={`Página ${n}`} aria-current={n === safePage ? 'page' : undefined}>
+                                                  <button key={n} onClick={() => setCredPage(n)} className={`inline-flex items-center justify-center h-7 min-w-7 rounded-md border-0 px-2 text-xs font-semibold tabular-nums ${n === safePage ? 'text-white bg-[#2a8fc4]/20 border border-[#5ab8e0]/20 shadow-[0_0_12px_-4px_rgba(42,143,196,0.3)]' : 'text-white/40 hover:bg-[#2a8fc4]/10 hover:text-white/70'}`} aria-label={`Página ${n}`} aria-current={n === safePage ? 'page' : undefined}>
                                                     {n}
                                                   </button>
                                                 ))}
                                               </div>
-                                              <div className="flex min-w-[4.5rem] items-center justify-center px-2 text-[12px] text-white/60 tabular-nums sm:hidden">
+                                              <div className="flex min-w-[4.5rem] items-center justify-center px-2 text-[12px] text-white/40 tabular-nums sm:hidden">
                                                 {safePage} / {totalPages}
                                               </div>
-                                              <button disabled={safePage === totalPages} onClick={() => setCredPage(x => Math.min(totalPages, x + 1))} className="inline-flex items-center justify-center h-7 w-7 rounded-lg text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed" aria-label="Próxima página">
+                                              <button disabled={safePage === totalPages} onClick={() => setCredPage(x => Math.min(totalPages, x + 1))} className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/40 hover:bg-[#2a8fc4]/10 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Próxima página">
                                                 <ChevronRight className="h-3.5 w-3.5" />
                                               </button>
-                                              <button disabled={safePage === totalPages} onClick={() => setCredPage(totalPages)} className="inline-flex items-center justify-center h-7 w-7 rounded-lg text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed" aria-label="Última página">
+                                              <button disabled={safePage === totalPages} onClick={() => setCredPage(totalPages)} className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/40 hover:bg-[#2a8fc4]/10 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Última página">
                                                 <ChevronsRight className="h-3.5 w-3.5" />
                                               </button>
                                             </div>
@@ -1130,17 +1298,91 @@ function Dashboard() {
                             {sec.links && sec.links.length > 0 && (
                               <div className="flex flex-wrap gap-2">
                                 {sec.links.map((l, j) => (
-                                  <a key={j} href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border/60 bg-card/40 h-8 px-4 text-xs font-medium text-muted-foreground transition-all duration-200 hover:text-foreground hover:border-primary/30 hover:bg-primary/5">
+                                  <a key={j} href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2a8fc4]/10 h-8 px-3 text-[10px] font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/5">
                                     {l.label} <ArrowUpRight className="h-3 w-3" />
                                   </a>
                                 ))}
                               </div>
                             )}
+                            {sec.ipCards && sec.ipCards.length > 0 && (
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                {sec.ipCards.map((card, j) => {
+                                  const ipLimit = isPremium ? Infinity : 1;
+                                  return (
+                                  <div key={j} className="relative overflow-hidden rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3">
+                                    {j >= ipLimit && (
+                                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 backdrop-blur-sm">
+                                        <span className="text-[10px] font-medium text-white/60">Desbloqueie com</span>
+                                        <a href="/planos" className="inline-flex items-center justify-center rounded-full px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white transition-all duration-200 active:scale-95"
+                                          style={{ background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 6px 0 rgba(42,143,196,0.3), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset, 0 0 24px -4px rgba(42,143,196,0.4)" }}
+                                        >COMPRAR PLANO</a>
+                                      </div>
+                                    )}
+                                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                                      <div className="flex items-center gap-2.5">
+                                        <Network className="h-4 w-4 text-cyan-400/70" />
+                                        <span className="font-mono text-[15px] font-medium text-cyan-300">{card.ip}</span>
+                                      </div>
+                                      <a href={`https://www.google.com/maps/search/?api=1&query=${card.lat},${card.lon}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium text-zinc-400 transition-all hover:border-cyan-500/20 hover:bg-cyan-500/5 hover:text-cyan-300">
+                                        <MapPin className="h-3 w-3" />Map <ArrowUpRight className="h-2.5 w-2.5 opacity-50" />
+                                      </a>
+                                    </div>
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3.5">
+                                        <div className="mb-2.5 flex items-center gap-2">
+                                          <MapPin className="h-3.5 w-3.5 text-cyan-400/60" />
+                                          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-500">Location</span>
+                                          {card.countryCode && (
+                                            <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-zinc-400">
+                                              <span className="text-xs">{card.countryCode}</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[13px] font-medium leading-relaxed text-white">{card.city}, {card.region}, {card.country}</p>
+                                        <p className="mt-1 text-[11px] text-zinc-500">{card.timezone}</p>
+                                      </div>
+                                      <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3.5">
+                                        <div className="mb-2.5 flex items-center gap-2">
+                                          <Globe2 className="h-3.5 w-3.5 text-cyan-400/60" />
+                                          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-500">Network</span>
+                                        </div>
+                                        <div className="space-y-1.5 text-[13px]">
+                                          <div className="flex justify-between"><span className="text-zinc-500">ISP</span><span className="font-medium text-white text-right max-w-[60%] truncate" title={card.isp}>{card.isp}</span></div>
+                                          <div className="flex justify-between"><span className="text-zinc-500">ASN</span><span className="font-medium text-white text-right max-w-[60%] truncate" title={card.org}>{card.org}</span></div>
+                                          {card.reverse && <div className="flex justify-between"><span className="text-zinc-500">rDNS</span><span className="max-w-[60%] truncate font-mono text-[11px] text-zinc-400" title={card.reverse}>{card.reverse}</span></div>}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-1.5 sm:gap-2">
+                                      {card.isProxy && (
+                                        <div className="flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-[11px] font-medium ring-1 transition-colors bg-red-500/8 text-red-300 ring-red-500/20">
+                                          <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 bg-red-400"></span><span className="relative inline-flex h-2 w-2 rounded-full bg-red-400"></span></span>
+                                          <Shield className="h-3 w-3" />VPN/Proxy
+                                        </div>
+                                      )}
+                                      {card.isDatacenter && (
+                                        <div className="flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-[11px] font-medium ring-1 transition-colors bg-white/[0.02] text-zinc-500 ring-white/[0.06]">
+                                          <span className="relative flex h-2 w-2 opacity-40"><span className="relative inline-flex h-2 w-2 rounded-full bg-zinc-600"></span></span>
+                                          <Cloud className="h-3 w-3" />Datacenter
+                                        </div>
+                                      )}
+                                      {card.isMobile && (
+                                        <div className="flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-[11px] font-medium ring-1 transition-colors bg-white/[0.02] text-zinc-500 ring-white/[0.06]">
+                                          <span className="relative flex h-2 w-2 opacity-40"><span className="relative inline-flex h-2 w-2 rounded-full bg-zinc-600"></span></span>
+                                          <Zap className="h-3 w-3" />Mobile
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              </div>
+                            )}
                           </div>
                         ))}
                         {collapsibles.length > 0 && (
-                          <div className="rounded-2xl border border-border bg-background/40 p-4">
-                            <h4 className="mb-3 text-sm font-semibold">Plataformas verificadas <span className="text-xs font-normal text-muted-foreground">({collapsibles.length})</span></h4>
+                          <div className="rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5 sm:p-4">
+                            <h4 className="mb-3 text-sm font-semibold text-white/80">Plataformas verificadas <span className="text-xs font-normal text-white/30">({collapsibles.length})</span></h4>
                             <div className="flex flex-wrap gap-2">
                               {collapsibles.map(({ s: sec, i }) => {
                                 const open = !!openSections[i];
@@ -1150,11 +1392,11 @@ function Dashboard() {
                                   <div key={i} className="w-full sm:w-auto">
                                     <button
                                       onClick={() => setOpenSections(o => ({ ...o, [i]: !o[i] }))}
-                                      className={`inline-flex items-center justify-center gap-2 rounded-full h-9 px-4 text-xs font-medium transition-all duration-200 ${found ? "ring-1 ring-destructive/40" : ""} ${open ? "text-white border-0" : "border border-border/60 bg-card/40 text-foreground hover:border-primary/30 hover:bg-primary/5"}`}
+                                      className={`inline-flex items-center justify-center gap-2 rounded-lg h-9 px-4 text-xs font-medium transition-all duration-300 ${found ? "ring-1 ring-red-500/30" : ""} ${open ? "text-white border-0 shadow-lg shadow-[#2a8fc4]/20" : "border border-[#2a8fc4]/10 text-white/50 hover:text-white/80 hover:border-[#2a8fc4]/20 hover:bg-[#2a8fc4]/5"}`}
                                       style={open ? {
-                                        background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)",
-                                        boxShadow: "0 0 4px 0 rgba(255, 255, 255, 0.07), 0 -2px 0 0 rgba(0, 0, 0, 0.20) inset, 0 1px 0 0 rgba(255, 255, 255, 0.40) inset",
-                                      } : undefined}
+                                        background: "linear-gradient(135deg, #2a8fc4, #5ab8e0)",
+                                        boxShadow: "0 4px 20px -4px rgba(42,143,196,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset",
+                                      } : { background: "rgba(10,15,24,0.8)" }}
                                       title={sec.title}
                                     >
                                       <img src={sec.icon} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
@@ -1162,16 +1404,16 @@ function Dashboard() {
                                       {found && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-destructive" />}
                                     </button>
                                     {open && sec.fields && (
-                                      <div className="mt-2 rounded-xl border border-border/60 bg-card/40 p-3">
+                                      <div className="mt-2 rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3">
                                         <div className="mb-2 flex items-center gap-2">
                                           <img src={sec.icon} alt="" className="h-4 w-4 rounded-sm" />
-                                          <span className="text-xs font-semibold">{sec.title}</span>
+                                          <span className="text-xs font-semibold text-white/80">{sec.title}</span>
                                         </div>
                                         <dl className="grid gap-1.5">
                                           {sec.fields.map((f, j) => (
-                                            <div key={j} className="flex flex-col rounded-md border border-border/40 bg-background/40 p-2">
-                                              <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">{f.label}</dt>
-                                              <dd className={`mt-0.5 break-all text-xs ${f.mono ? "font-mono" : ""} ${f.warn ? "text-destructive" : ""} ${f.ok ? "text-emerald-400" : ""}`}>{f.value}</dd>
+                                              <div key={j} className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2">
+                                                <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">{f.label}</dt>
+                                              <dd className={`mt-0.5 break-all text-xs text-white/80 ${f.mono ? "font-mono" : ""} ${f.warn ? "text-red-400" : ""} ${f.ok ? "text-emerald-400" : ""}`}>{f.value}</dd>
                                             </div>
                                           ))}
                                         </dl>
@@ -1187,7 +1429,7 @@ function Dashboard() {
                     );
                   })()}
                   {result.sources.length > 0 && (
-                    <p className="text-[10px] text-muted-foreground/70">
+                    <p className="text-[9px] text-[#5ab8e0]/40">
                       Fontes: {result.sources.join(" • ")}
                     </p>
                   )}

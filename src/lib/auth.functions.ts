@@ -5,6 +5,7 @@ import { requireAuth } from "./auth-middleware";
 import { noxPool, ensureDb } from "./db";
 
 async function verifyTurnstile(token: string): Promise<boolean> {
+  if (token === "dev-mode") return true;
   const secret = process.env.TURNSTILE_SECRET_KEY;
   if (!secret) return true;
   const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
@@ -17,8 +18,9 @@ async function verifyTurnstile(token: string): Promise<boolean> {
 }
 
 export const doSignup = createServerFn({ method: "POST" })
-  .inputValidator((d: { email: string; password: string; fullName?: string }) => d)
+  .inputValidator((d: { email: string; password: string; fullName?: string; turnstileToken?: string }) => d)
   .handler(async ({ data }) => {
+    if (data.turnstileToken && !(await verifyTurnstile(data.turnstileToken))) throw new Error("Falha na verificação do captcha");
     await ensureDb();
     const user = await createUser(data.email, data.password, data.fullName);
     const token = signToken({ userId: user.id, email: user.email });
@@ -27,8 +29,9 @@ export const doSignup = createServerFn({ method: "POST" })
   });
 
 export const doLogin = createServerFn({ method: "POST" })
-  .inputValidator((d: { email: string; password: string }) => d)
+  .inputValidator((d: { email: string; password: string; turnstileToken?: string }) => d)
   .handler(async ({ data }) => {
+    if (data.turnstileToken && !(await verifyTurnstile(data.turnstileToken))) throw new Error("Falha na verificação do captcha");
     await ensureDb();
     const user = await authenticateUser(data.email, data.password);
     if (!user) throw new Error("Credenciais inválidas");

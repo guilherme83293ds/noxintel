@@ -18,6 +18,7 @@ import { Route as AuthenticatedDashboardRouteImport } from './routes/_authentica
 import { Route as AuthenticatedContaRouteImport } from './routes/_authenticated/conta'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as ApiPublicStripeWebhookRouteImport } from './routes/api/public/stripe-webhook'
+import { Route as ApiPublicBosspayWebhookRouteImport } from './routes/api/public/bosspay-webhook'
 import { Route as AuthenticatedComprarPlanIdRouteImport } from './routes/_authenticated/comprar.$planId'
 
 const PlanosRoute = PlanosRouteImport.update({
@@ -64,6 +65,11 @@ const ApiPublicStripeWebhookRoute = ApiPublicStripeWebhookRouteImport.update({
   path: '/api/public/stripe-webhook',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicBosspayWebhookRoute = ApiPublicBosspayWebhookRouteImport.update({
+  id: '/api/public/bosspay-webhook',
+  path: '/api/public/bosspay-webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedComprarPlanIdRoute =
   AuthenticatedComprarPlanIdRouteImport.update({
     id: '/comprar/$planId',
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/api/osint': typeof ApiOsintRoute
   '/comprar/$planId': typeof AuthenticatedComprarPlanIdRoute
+  '/api/public/bosspay-webhook': typeof ApiPublicBosspayWebhookRoute
   '/api/public/stripe-webhook': typeof ApiPublicStripeWebhookRoute
 }
 export interface FileRoutesByTo {
@@ -91,6 +98,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/api/osint': typeof ApiOsintRoute
   '/comprar/$planId': typeof AuthenticatedComprarPlanIdRoute
+  '/api/public/bosspay-webhook': typeof ApiPublicBosspayWebhookRoute
   '/api/public/stripe-webhook': typeof ApiPublicStripeWebhookRoute
 }
 export interface FileRoutesById {
@@ -104,6 +112,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/api/osint': typeof ApiOsintRoute
   '/_authenticated/comprar/$planId': typeof AuthenticatedComprarPlanIdRoute
+  '/api/public/bosspay-webhook': typeof ApiPublicBosspayWebhookRoute
   '/api/public/stripe-webhook': typeof ApiPublicStripeWebhookRoute
 }
 export interface FileRouteTypes {
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/api/osint'
     | '/comprar/$planId'
+    | '/api/public/bosspay-webhook'
     | '/api/public/stripe-webhook'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/api/osint'
     | '/comprar/$planId'
+    | '/api/public/bosspay-webhook'
     | '/api/public/stripe-webhook'
   id:
     | '__root__'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/api/osint'
     | '/_authenticated/comprar/$planId'
+    | '/api/public/bosspay-webhook'
     | '/api/public/stripe-webhook'
   fileRoutesById: FileRoutesById
 }
@@ -149,6 +161,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PlanosRoute: typeof PlanosRoute
   ApiOsintRoute: typeof ApiOsintRoute
+  ApiPublicBosspayWebhookRoute: typeof ApiPublicBosspayWebhookRoute
   ApiPublicStripeWebhookRoute: typeof ApiPublicStripeWebhookRoute
 }
 
@@ -217,6 +230,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicStripeWebhookRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/bosspay-webhook': {
+      id: '/api/public/bosspay-webhook'
+      path: '/api/public/bosspay-webhook'
+      fullPath: '/api/public/bosspay-webhook'
+      preLoaderRoute: typeof ApiPublicBosspayWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/comprar/$planId': {
       id: '/_authenticated/comprar/$planId'
       path: '/comprar/$planId'
@@ -250,6 +270,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PlanosRoute: PlanosRoute,
   ApiOsintRoute: ApiOsintRoute,
+  ApiPublicBosspayWebhookRoute: ApiPublicBosspayWebhookRoute,
   ApiPublicStripeWebhookRoute: ApiPublicStripeWebhookRoute,
 }
 export const routeTree = rootRouteImport

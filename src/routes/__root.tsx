@@ -10,8 +10,11 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import logo from "../../public/logo.png";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { LoadingScreen } from "../components/LoadingScreen";
+import { useClickSound } from "../hooks/useClickSound";
+import { useTypingSound } from "../hooks/useTypingSound";
 
 
 
@@ -94,6 +97,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1a675073-f051-4434-a045-bb3ccf19d435/id-preview-dcf5b4a5--2db524b7-50b0-48ca-a062-ef8148385e49.lovable.app-1782102037932.png" },
     ],
     links: [
+      { rel: "icon", type: "image/svg+xml", href: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%232a8fc4'/%3E%3Cstop offset='100%25' stop-color='%235ab8e0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='20' fill='url(%23g)'/%3E%3Ctext x='50' y='68' font-family='Arial' font-weight='bold' font-size='50' text-anchor='middle' fill='white'%3EN%3C/text%3E%3C/svg%3E" },
+      { rel: "icon", type: "image/png", href: "/logo.png", sizes: "192x192" },
+      { rel: "apple-touch-icon", href: "/logo.png", sizes: "180x180" },
       {
         rel: "stylesheet",
         href: appCss,
@@ -111,6 +117,10 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="pt-BR">
       <head>
         <HeadContent />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet" />
+        <link rel="stylesheet" href={appCss} />
       </head>
       <body className="bg-black">
         {children}
@@ -174,19 +184,40 @@ function RootComponent() {
   const router = useRouter();
   const [appReady, setAppReady] = useState(false);
   useConstellation();
+  const playClick = useClickSound();
+  const playKey = useTypingSound();
 
   useEffect(() => {
-    // Once the router resolves its initial load, mark the app as ready.
-    // LoadingScreen enforces its own minimum visible duration.
-    if (router.state.status === "idle") {
-      setAppReady(true);
-    }
-  }, [router.state.status]);
+    const clickHandler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("button") || target.closest('a[href]')) {
+        playClick();
+      }
+    };
+    document.addEventListener("click", clickHandler);
+    return () => document.removeEventListener("click", clickHandler);
+  }, [playClick]);
+
+  useEffect(() => {
+    const keyHandler = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+        if (e.key.length === 1) {
+          playKey();
+        }
+      }
+    };
+    document.addEventListener("keydown", keyHandler);
+    return () => document.removeEventListener("keydown", keyHandler);
+  }, [playKey]);
+
+  useEffect(() => {
+    setAppReady(true);
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
-      {!appReady && <LoadingScreen durationMs={1800} />}
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+      {!appReady && <LoadingScreen />}
       <Outlet />
     </QueryClientProvider>
   );

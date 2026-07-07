@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
-import { botMultiPool, consultaPool } from "../../lib/bot-db";
+import { botQuery, consultaPool } from "../../lib/bot-db";
 import { CBO_DESCRICOES } from "../../lib/cbo";
 import crypto from "crypto";
 
@@ -36,7 +36,24 @@ function buildCredentialCards(rows: any[], maskEmail = false): CredentialCard[] 
 
 type Field = { label: string; value: string; mono?: boolean; warn?: boolean; ok?: boolean };
 type CredentialCard = { id: string; url: string; email: string; password: string; telefone?: string; source: string; stolenDate?: string; discoveredDate?: string };
-type Section = { title: string; icon?: string; collapsible?: boolean; fields?: Field[]; list?: string[]; links?: { label: string; url: string }[]; credentials?: CredentialCard[] };
+type IpCard = {
+  ip: string;
+  country: string;
+  countryCode: string;
+  region: string;
+  city: string;
+  lat: number;
+  lon: number;
+  timezone: string;
+  isp: string;
+  org: string;
+  asn: string;
+  reverse: string;
+  isProxy: boolean;
+  isDatacenter: boolean;
+  isMobile: boolean;
+};
+type Section = { title: string; icon?: string; collapsible?: boolean; fields?: Field[]; list?: string[]; links?: { label: string; url: string }[]; credentials?: CredentialCard[]; ipCards?: IpCard[] };
 type OsintResult = {
   ok: boolean;
   tool: string;
@@ -46,6 +63,95 @@ type OsintResult = {
   sources: string[];
   error?: string;
 };
+
+async function searchIntelx(term: string): Promise<{ ips: string[] }> {
+  const key = process.env.INTELX_API_KEY;
+  if (!key) return { ips: [] };
+  const base = 'https://free.intelx.io';
+  const ips = new Set<string>();
+  const ipRe = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g;
+  const stealerRe = /(?:\[[A-Z]{2}\])?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})_\d{4}_\d{2}_\d{2}/;
+  const privRe = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.)/;
+  try {
+    const searchRes = await fetch(`${base}/intelligent/search`, {
+      method: 'POST',
+      headers: { 'x-key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ term, maxresults: 100, media: 0, target: 0, timeout: 15 }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!searchRes.ok) return { ips: [] };
+    const body = await searchRes.json();
+    if (body.records) {
+      for (const r of body.records) { extractIpsFromRecord(r, term, ips, ipRe, stealerRe, privRe); }
+      return { ips: [...ips] };
+    }
+    const searchId = body.id;
+    if (!searchId) return { ips: [] };
+    await new Promise(r => setTimeout(r, 2000));
+    const resultRes = await fetch(`${base}/intelligent/search/result?id=${encodeURIComponent(searchId)}&limit=100&offset=0&format=1`, {
+      headers: { 'x-key': key },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resultRes.ok) return { ips: [] };
+    const data = await resultRes.json();
+    for (const r of (data.records || [])) { extractIpsFromRecord(r, term, ips, ipRe, stealerRe, privRe); }
+    return { ips: [...ips] };
+  } catch {
+    return { ips: [] };
+  }
+}
+
+function extractIpsFromRecord(r: any, term: string, ips: Set<string>, ipRe: RegExp, stealerRe: RegExp, privRe: RegExp) {
+  const name = (r.name || '').trim();
+  const nameLower = name.toLowerCase();
+  const termLower = term.toLowerCase();
+  const stealerMatch = name.match(stealerRe);
+  if (stealerMatch) { const ip = stealerMatch[1]; if (!privRe.test(ip)) ips.add(ip); return; }
+  if (nameLower === termLower || nameLower.includes(termLower)) {
+    const text = `${name} ${r.description || ''} ${r.keyvalues ? JSON.stringify(r.keyvalues) : ''}`;
+    let m; while ((m = ipRe.exec(text)) !== null) { if (!privRe.test(m[1])) ips.add(m[1]); }
+  }
+  if (name && ipRe.test(name)) {
+    let m; while ((m = ipRe.exec(name)) !== null) { if (!privRe.test(m[1])) ips.add(m[1]); }
+  }
+}
+
+async function enrichIp(ip: string): Promise<IpCard | null> {
+  try {
+    const r = await fetch(`http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,countryCode,region,regionName,city,lat,lon,timezone,isp,org,as,reverse,proxy,hosting,mobile,query`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.status !== "success") return null;
+    return {
+      ip: d.query || ip,
+      country: d.country || "",
+      countryCode: d.countryCode || "",
+      region: d.region || "",
+      city: d.city || "",
+      lat: d.lat || 0,
+      lon: d.lon || 0,
+      timezone: d.timezone || "",
+      isp: d.isp || "",
+      org: d.org || "",
+      asn: d.as || "",
+      reverse: d.reverse || "",
+      isProxy: !!d.proxy,
+      isDatacenter: !!d.hosting,
+      isMobile: !!d.mobile,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function enrichIps(ips: string[]): Promise<IpCard[]> {
+  const results = await Promise.allSettled(ips.map(enrichIp));
+  return results
+    .map(r => r.status === "fulfilled" ? r.value : null)
+    .filter((v): v is IpCard => v !== null);
+}
 
 const json = (data: OsintResult, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -241,7 +347,7 @@ const FREE_PROVIDERS = new Set([
 async function dnsHasMx(domain: string): Promise<{ has: boolean; first?: string }> {
   try {
     const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=MX`, {
-      headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000),
+      headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(2000),
     });
     const d = await r.json() as { Answer?: { data: string }[] };
     const ans = d.Answer || [];
@@ -252,7 +358,7 @@ async function dnsHasMx(domain: string): Promise<{ has: boolean; first?: string 
 // Holehe-style: real probe against each platform's signup/reset endpoint.
 async function platformCheck(email: string, platform: string): Promise<"found" | "not_found" | "unknown"> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 6000);
+  const t = setTimeout(() => ctrl.abort(), 2500);
   try {
     let url = "", method: "GET" | "POST" = "POST", body: URLSearchParams | undefined;
     const ct = "application/x-www-form-urlencoded";
@@ -296,84 +402,7 @@ async function toolEmail(email: string): Promise<OsintResult> {
   const sources: string[] = [];
   const domain = (email.split("@")[1] || "").toLowerCase().trim();
 
-  // 1. Kick off all promises in parallel
-  const mxPromise = dnsHasMx(domain);
-  const mxIpPromise = mxPromise.then(async mx => {
-    if (!mx.first) return [] as string[];
-    const host = mx.first.split(/\s+/).pop() || mx.first;
-    try {
-      const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
-        headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(3000),
-      });
-      const d = await r.json() as { Answer?: { data: string }[] };
-      return [...new Set((d.Answer || []).map(a => a.data))] as string[];
-    } catch { return []; }
-  }).catch(() => [] as string[]);
-  
-  const dbPromise = botMultiPool.query(
-    `SELECT url, email, senha, telefone, fonte FROM credentials WHERE email = $1 LIMIT 100`,
-    [email.toLowerCase()]
-  ).catch(e => {
-    console.error("Email leak DB error:", e);
-    return { rows: [] };
-  });
-
-  const platformChecksPromise = Promise.all(
-    PLATFORMS.map(async (p) => ({
-      p,
-      r: await platformCheck(email, p.name)
-    }))
-  );
-
-  const hudsonRockPromise = fetch(`https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=${encodeURIComponent(email)}`, {
-    headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000),
-  }).then(async r => r.ok ? r.json() : null).catch(() => null);
-
-  const xposedOrNotPromise = fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(email)}`, { signal: AbortSignal.timeout(4000) })
-    .then(async r => r.status === 404 ? { breaches: [] } : r.ok ? r.json() : null).catch(() => null);
-
-  const emailRepPromise = fetch(`https://emailrep.io/${encodeURIComponent(email)}`, {
-    headers: { accept: "application/json", "user-agent": "NoxIntel-OSINT" },
-    signal: AbortSignal.timeout(4000),
-  }).then(async r => r.ok ? r.json() : null).catch(() => null);
-
-  const intelxPromise = Promise.resolve(null);
-
-  // 2. Await all concurrently
-  const [
-    mx,
-    mxIps,
-    dbResult,
-    checks,
-    hudsonData,
-    xposedData,
-    emailRepData,
-    intelxData
-  ] = await Promise.all([
-    mxPromise,
-    mxIpPromise,
-    dbPromise,
-    platformChecksPromise,
-    hudsonRockPromise,
-    xposedOrNotPromise,
-    emailRepPromise,
-    intelxPromise
-  ]);
-
-  // 3. Process SMTP Verify
-  sections.push({
-    title: "SMTP Verify — Domínio",
-    fields: [
-      { label: "Domínio", value: domain || "—", mono: true },
-      { label: "MX encontrado?", value: mx.has ? "Sim" : "Não", ok: mx.has, warn: !mx.has },
-      { label: "Servidor MX", value: mx.first || "—", mono: true },
-      ...(mxIps.length ? [{ label: "IPs do servidor MX", value: mxIps.join(" · "), mono: true }] : []),
-      { label: "Caixa de entrada válida?", value: mx.has ? "provável" : "unknown" },
-    ],
-  });
-  sources.push("Cloudflare DNS (MX)");
-
-  // 4. Process Disposable Check
+  // Static checks — instant
   const isDisposable = DISPOSABLE_DOMAINS.has(domain);
   const isFree = FREE_PROVIDERS.has(domain);
   sections.push({
@@ -387,7 +416,12 @@ async function toolEmail(email: string): Promise<OsintResult> {
   });
   sources.push("Lista pública de domínios descartáveis");
 
-  // 5. Process DB Leak Search results
+  // DB query — awaits here (fast, <200ms)
+  const dbResult = await botQuery(
+    `SELECT url, email, senha, telefone, fonte FROM credentials WHERE email = $1 LIMIT 1000`,
+    [email.trim()]
+  ).catch(() => ({ rows: [] }));
+
   const emailLeakResults = dbResult?.rows || [];
   if (emailLeakResults.length > 0) {
     const creds = buildCredentialCards(emailLeakResults);
@@ -403,23 +437,19 @@ async function toolEmail(email: string): Promise<OsintResult> {
   }
   sources.push("Banco de dados local");
 
-  // 5b. Telefones associados
+  // Phones from leak results
   const phones = emailLeakResults
     .map(r => r.telefone)
     .filter((v: string) => v && v.trim() && v !== "—")
     .filter((v: string, i: number, a: string[]) => a.indexOf(v) === i);
   if (phones.length > 0) {
     const formatted = phones.map((p: string) => {
-      try {
-        const parsed = parsePhoneNumberFromString(p, "BR");
-        return parsed ? parsed.formatInternational() : p;
-      } catch { return p; }
+      try { const parsed = parsePhoneNumberFromString(p, "BR"); return parsed ? parsed.formatInternational() : p; }
+      catch { return p; }
     });
     sections.push({
       title: `Telefones associados ao e-mail (${phones.length})`,
-      fields: [
-        { label: "Telefones encontrados em vazamentos", value: formatted.join(" · "), mono: true },
-      ],
+      fields: [{ label: "Telefones encontrados em vazamentos", value: formatted.join(" · "), mono: true }],
       links: phones.map((p: string) => ({
         label: `Buscar telefone ${p}`,
         url: `/dashboard?tool=phone&query=${encodeURIComponent(p)}`,
@@ -428,192 +458,7 @@ async function toolEmail(email: string): Promise<OsintResult> {
     sources.push("Telefones extraídos de vazamentos");
   }
 
-  // 6. Process Platform Checks
-  for (const { p, r } of (checks || [])) {
-    if (r === "unknown") continue;
-    const statusText =
-      r === "found" ? "Conta registrada detectada via email" :
-      "Nenhuma conta encontrada com este email";
-    sections.push({
-      title: `${p.name} — ${p.kind}`,
-      icon: `https://www.google.com/s2/favicons?domain=${p.domain}&sz=64`,
-      collapsible: true,
-      fields: [
-        { label: "Status", value: statusText, ok: r === "found", warn: r === "found" },
-        { label: "Método", value: "email_check", mono: true },
-        { label: "Plataforma", value: p.domain, mono: true },
-      ],
-    });
-  }
-  sources.push(`Holehe-style checks (${checks?.length || 0} plataformas ativas)`);
-
-  // 7. Process HudsonRock Data
-  if (hudsonData) {
-    const stealers = hudsonData.stealers ?? [];
-
-    function extractWindowsUser(path: string): string {
-      const m = path?.match(/Users\\([^\\]+)/i);
-      return m ? m[1] : "—";
-    }
-
-    function buildHwid(s: any): string {
-      const user = extractWindowsUser(s.malware_path || "");
-      const pc = s.computer_name || "";
-      const os = s.operating_system || "";
-      const key = `${pc}|${user}|${os}`;
-      if (key === "—|—|—") return "—";
-      return crypto.createHash("md5").update(key).digest("hex").slice(0, 16).toUpperCase();
-    }
-
-    sections.push({
-      title: "Dispositivos comprometidos por infostealer",
-      fields: [
-        { label: "Total de stealers", value: String(stealers.length), warn: stealers.length > 0, ok: stealers.length === 0 },
-        { label: "Serviços corporativos expostos", value: String(hudsonData.total_corporate_services ?? 0) },
-        { label: "Serviços de usuário expostos", value: String(hudsonData.total_user_services ?? 0) },
-      ],
-      list: stealers.slice(0, 8).flatMap((s: any, idx: number) => {
-        const ip = s.ip || s.ip_address || "?";
-        const av = (s.antiviruses && s.antiviruses.length) ? s.antiviruses.join(", ") : "—";
-        const logins = (s.top_logins?.filter(Boolean) ?? []).map((l: string) => unmaskEmail(l, email));
-        const passwords = s.top_passwords?.filter(Boolean) ?? [];
-        const winUser = extractWindowsUser(s.malware_path || "");
-        const hwid = buildHwid(s);
-        return [
-          `━━━ DISPOSITIVO #${idx + 1} ━━━`,
-          `computador: ${s.computer_name ?? "?"} · IP: ${ip} · país: ${s.country ?? "?"}`,
-          `sistema: ${s.operating_system ?? "?"} · data: ${s.date_compromised ?? "?"}`,
-          `antivírus: ${av} · malware: ${s.malware_path ?? "?"}`,
-          `Usuário Windows: ${winUser} · HWID: ${hwid}`,
-          `Logins associados (${logins.length}): ${logins.length ? logins.join(" · ") : "—"}`,
-          `Senhas associadas (${passwords.length}, mascaradas): ${passwords.length ? passwords.join(" · ") : "—"}`,
-        ];
-      }),
-    });
-
-    stealers.slice(0, 12).forEach((s: any, idx: number) => {
-      const ip = s.ip || s.ip_address || "—";
-      const logins = (s.top_logins?.filter(Boolean) ?? []).map((l: string) => unmaskEmail(l, email));
-      const passwords = s.top_passwords?.filter(Boolean) ?? [];
-      const winUser = extractWindowsUser(s.malware_path || "");
-      const hwid = buildHwid(s);
-      const stealerId = s.stealer || hwid;
-      sections.push({
-        title: `Dispositivo #${idx + 1} — ${s.computer_name ?? "desconhecido"}`,
-        icon: `https://www.google.com/s2/favicons?domain=virustotal.com&sz=64`,
-        collapsible: true,
-        fields: [
-          ...(stealerId !== hwid ? [{ label: "Stealer ID", value: stealerId, mono: true }] : []),
-          { label: "HWID (dispositivo)", value: hwid, mono: true, warn: hwid !== "—" },
-          { label: "Usuário Windows", value: winUser, mono: true, warn: winUser !== "—" },
-          { label: "Computador", value: s.computer_name ?? "—", mono: true },
-          { label: "IP do vazamento", value: ip, mono: true, warn: ip !== "—" },
-          { label: "País", value: s.country ?? "—" },
-          { label: "Sistema operacional", value: s.operating_system ?? "—" },
-          { label: "Data do comprometimento", value: s.date_compromised ?? "—" },
-          { label: "Antivírus", value: (s.antiviruses && s.antiviruses.length) ? s.antiviruses.join(", ") : "Nenhum detectado", warn: !s.antiviruses?.length },
-          { label: "Caminho do malware", value: s.malware_path ?? "—", mono: true },
-          { label: "Serviços corporativos expostos", value: String(s.total_corporate_services ?? 0) },
-          { label: "Serviços de usuário expostos", value: String(s.total_user_services ?? 0) },
-          { label: "Total de logins associados", value: String(logins.length), warn: logins.length > 0 },
-          { label: "Total de senhas associadas", value: String(passwords.length), warn: passwords.length > 0 },
-        ],
-        list: [
-          ...(logins.length ? ["── Logins associados ──", ...logins] : []),
-          ...(passwords.length ? ["── Senhas associadas (mascaradas) ──", ...passwords] : []),
-        ],
-      });
-    });
-    sources.push("Stealer logs");
-
-    // 7b. HWIDs únicos dos dispositivos
-    const hwids = stealers
-      .map((s: any) => buildHwid(s))
-      .filter((h: string) => h !== "—")
-      .filter((h: string, i: number, a: string[]) => a.indexOf(h) === i);
-    if (hwids.length > 0) {
-      sections.push({
-        title: `HWIDs dos dispositivos (${hwids.length})`,
-        fields: [
-          { label: "HWIDs encontrados", value: hwids.join("  ·  "), mono: true, warn: true },
-        ],
-      });
-    }
-  }
-
-  // 8. Process XposedOrNot Data
-  if (xposedData) {
-    const list = (xposedData.breaches?.[0] ?? []).filter(Boolean);
-    sections.push({
-      title: "XposedOrNot — Vazamento",
-      fields: [{ label: "Total breaches", value: String(list.length), warn: list.length > 0, ok: list.length === 0 }],
-      list: list.length ? list : ["Nenhum vazamento conhecido"],
-    });
-    sources.push("XposedOrNot");
-  }
-
-  // 9. Process EmailRep Data
-  if (emailRepData) {
-    const det = emailRepData.details ?? {};
-    const profs = det.profiles ?? [];
-    sections.push({
-      title: "EmailRep — Reputação do e-mail",
-      icon: `https://www.google.com/s2/favicons?domain=emailrep.io&sz=64`,
-      collapsible: true,
-      fields: [
-        { label: "Reputação", value: emailRepData.reputation ?? "—", ok: emailRepData.reputation === "high", warn: emailRepData.reputation === "low" },
-        { label: "Suspeito", value: emailRepData.suspicious ? "Sim" : "Não", warn: !!emailRepData.suspicious, ok: !emailRepData.suspicious },
-        { label: "Referências encontradas", value: String(emailRepData.references ?? 0) },
-        { label: "Credenciais vazadas", value: det.credentials_leaked ? "Sim" : "Não", warn: !!det.credentials_leaked },
-        { label: "Vazamento recente", value: det.credentials_leaked_recent ? "Sim" : "Não", warn: !!det.credentials_leaked_recent },
-        { label: "Em data breach", value: det.data_breach ? "Sim" : "Não", warn: !!det.data_breach },
-        { label: "Atividade maliciosa", value: det.malicious_activity ? "Sim" : "Não", warn: !!det.malicious_activity },
-        { label: "Blacklist", value: det.blacklisted ? "Sim" : "Não", warn: !!det.blacklisted },
-        { label: "Spam", value: det.spam ? "Sim" : "Não", warn: !!det.spam },
-        { label: "Visto pela 1ª vez", value: det.first_seen ?? "—" },
-        { label: "Visto pela última vez", value: det.last_seen ?? "—" },
-        { label: "Domínio existe", value: det.domain_exists ? "Sim" : "Não" },
-        { label: "Reputação do domínio", value: det.domain_reputation ?? "—" },
-        { label: "Domínio novo", value: det.new_domain ? "Sim" : "Não", warn: !!det.new_domain },
-        { label: "Idade do domínio (dias)", value: String(det.days_since_domain_creation ?? "—") },
-        { label: "TLD suspeito", value: det.suspicious_tld ? "Sim" : "Não", warn: !!det.suspicious_tld },
-        { label: "Descartável", value: det.disposable ? "Sim" : "Não", warn: !!det.disposable },
-        { label: "Provedor gratuito", value: det.free_provider ? "Sim" : "Não" },
-        { label: "Entregável", value: det.deliverable ? "Sim" : "Não", ok: !!det.deliverable },
-        { label: "Aceita tudo (catch-all)", value: det.accept_all ? "Sim" : "Não" },
-        { label: "MX válido", value: det.valid_mx ? "Sim" : "Não", ok: !!det.valid_mx },
-        { label: "Spoofável", value: det.spoofable ? "Sim" : "Não", warn: !!det.spoofable },
-        { label: "SPF estrito", value: det.spf_strict ? "Sim" : "Não" },
-        { label: "DMARC enforced", value: det.dmarc_enforced ? "Sim" : "Não" },
-        { label: "Perfis sociais detectados", value: profs.length ? profs.join(", ") : "Nenhum" },
-      ],
-    });
-    sources.push("EmailRep.io");
-  }
-
-  // 10. Process Scam / Abuse references
-  sections.push({
-    title: "Scam / Abuse — Referências cruzadas",
-    icon: `https://www.google.com/s2/favicons?domain=scamsearch.io&sz=64`,
-    collapsible: true,
-    fields: [
-      { label: "ScamSearch", value: "Banco de dados colaborativo de e-mails reportados em golpes" },
-      { label: "ScamAdviser", value: "Pontuação de confiança e histórico de denúncias" },
-      { label: "CleanTalk", value: "Lista negra anti-spam usada por +500k sites" },
-      { label: "StopForumSpam", value: "E-mails associados a spam/abuse em fóruns" },
-      { label: "AbuseIPDB Email", value: "Cruzamento de e-mails com IPs reportados por abuse" },
-    ],
-    links: [
-      { label: "ScamSearch", url: `https://scamsearch.io/search_report?searchoption=all&search=${encodeURIComponent(email)}` },
-      { label: "ScamAdviser", url: `https://www.scamadviser.com/check-website/${encodeURIComponent(email.split("@")[1] || "")}` },
-      { label: "CleanTalk", url: `https://cleantalk.org/blacklists/${encodeURIComponent(email)}` },
-      { label: "StopForumSpam", url: `https://www.stopforumspam.com/search?q=${encodeURIComponent(email)}` },
-      { label: "AbuseIPDB", url: `https://www.abuseipdb.com/check/${encodeURIComponent(email.split("@")[1] || "")}` },
-    ],
-  });
-  sources.push("ScamSearch", "ScamAdviser", "CleanTalk", "StopForumSpam", "AbuseIPDB");
-
-  // 11. Process Gravatar & Dorks
+  // Gravatar & dorks
   const md5 = await sha1Hex(email.trim().toLowerCase());
   sections.push({
     title: "Identidade pública — Links",
@@ -628,45 +473,134 @@ async function toolEmail(email: string): Promise<OsintResult> {
   });
   sources.push("Gravatar", "Google", "GitHub", "LeakLookup", "DeHashed", "IntelX");
 
-  // 12. IPs extraídos dos stealers + MX
-  const allIps = [...(mxIps || [])];
-  if (hudsonData) {
-    const stealers = hudsonData.stealers ?? [];
-    const stealerIps = stealers
-      .map((s: any) => s.ip || s.ip_address || "")
-      .filter((ip: string) => ip && ip !== "—");
-    allIps.push(...stealerIps);
-  }
-  const uniqueIps = [...new Set(allIps)].filter(Boolean);
-  if (uniqueIps.length > 0) {
-    sections.push({
-      title: `IPs associados ao e-mail (${uniqueIps.length})`,
-      icon: `https://www.google.com/s2/favicons?domain=whatismyip.com&sz=64`,
-      collapsible: true,
-      fields: [
-        { label: "IPs encontrados", value: uniqueIps.join(" · "), mono: true, warn: true },
-      ],
-      list: [
-        "── IPs encontrados ──",
-        ...uniqueIps.map((ip: string) => {
-          const fromMx = mxIps?.includes(ip);
-          const masked = ip.includes("***");
-          const tag = masked ? " (parcialmente mascarado - HudsonRock)" : fromMx ? " (servidor MX)" : " (stealer log)";
-          return `${ip}${tag}`;
-        }),
-      ],
-      links: uniqueIps.map((ip: string) => ({
-        label: `Consultar IP ${ip}`,
-        url: `/dashboard?tool=ip&query=${encodeURIComponent(ip)}`,
-      })),
-    });
-    sources.push("Cloudflare DNS", "Stealer logs");
-  }
+  // Scam/Abuse references — static
+  sections.push({
+    title: "Scam / Abuse — Referências cruzadas",
+    collapsible: true,
+    fields: [
+      { label: "ScamSearch", value: "Banco de dados colaborativo de e-mails reportados em golpes" },
+      { label: "ScamAdviser", value: "Pontuação de confiança e histórico de denúncias" },
+      { label: "CleanTalk", value: "Lista negra anti-spam usada por +500k sites" },
+      { label: "StopForumSpam", value: "E-mails associados a spam/abuse em fóruns" },
+      { label: "AbuseIPDB Email", value: "Cruzamento de e-mails com IPs reportados por abuse" },
+    ],
+    links: [
+      { label: "ScamSearch", url: `https://scamsearch.io/search_report?searchoption=all&search=${encodeURIComponent(email)}` },
+      { label: "ScamAdviser", url: `https://www.scamadviser.com/check-website/${encodeURIComponent(domain)}` },
+      { label: "CleanTalk", url: `https://cleantalk.org/blacklists/${encodeURIComponent(email)}` },
+      { label: "StopForumSpam", url: `https://www.stopforumspam.com/search?q=${encodeURIComponent(email)}` },
+      { label: "AbuseIPDB", url: `https://www.abuseipdb.com/check/${encodeURIComponent(domain)}` },
+    ],
+  });
+  sources.push("ScamSearch", "ScamAdviser", "CleanTalk", "StopForumSpam", "AbuseIPDB");
 
-  const foundCount = checks.filter(c => c.r === "found").length;
+  // External APIs — enrich with IP geo, breaches, etc.
+  await (async () => {
+    const mx = await dnsHasMx(domain);
+    let mxIps: string[] = [];
+    if (mx.first) {
+      const host = mx.first.split(/\s+/).pop() || mx.first;
+      try {
+        const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
+          headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(1000),
+        });
+        const d = await r.json() as { Answer?: { data: string }[] };
+        mxIps = [...new Set((d.Answer || []).map(a => a.data))];
+      } catch {}
+    }
+    sections.unshift({
+      title: "SMTP Verify — Domínio",
+      fields: [
+        { label: "Domínio", value: domain || "—", mono: true },
+        { label: "MX encontrado?", value: mx.has ? "Sim" : "Não", ok: mx.has, warn: !mx.has },
+        { label: "Servidor MX", value: mx.first || "—", mono: true },
+        ...(mxIps.length ? [{ label: "IPs do servidor MX", value: mxIps.join(" · "), mono: true }] : []),
+        { label: "Caixa de entrada válida?", value: mx.has ? "provável" : "unknown" },
+      ],
+    });
+
+    const [checks, hudsonData, xposedData, emailRepData, intelxData] = await Promise.all([
+      Promise.all(PLATFORMS.map(async (p) => ({ p, r: await platformCheck(email, p.name) }))),
+      fetch(`${process.env.HUDSONROCK_FREE_API_BASE || 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools'}/search-by-email?email=${encodeURIComponent(email)}`, {
+        headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000),
+      }).then(async r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(email)}`, { signal: AbortSignal.timeout(1000) })
+        .then(async r => r.status === 404 ? { breaches: [] } : r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://emailrep.io/${encodeURIComponent(email)}`, {
+        headers: { accept: "application/json", "user-agent": "NoxIntel-OSINT" },
+        signal: AbortSignal.timeout(1000),
+      }).then(async r => r.ok ? r.json() : null).catch(() => null),
+      searchIntelx(email),
+    ]);
+
+    for (const { p, r } of (checks || [])) {
+      if (r === "unknown") continue;
+      sections.push({
+        title: `${p.name} — ${p.kind}`,
+        collapsible: true,
+        fields: [
+          { label: "Status", value: r === "found" ? "Conta registrada" : "Nenhuma conta", ok: r === "found", warn: r === "found" },
+          { label: "Plataforma", value: p.domain, mono: true },
+        ],
+      });
+    }
+
+    if (hudsonData?.stealers?.length) {
+      sections.push({
+        title: `Dispositivos comprometidos (${hudsonData.stealers.length})`,
+        list: hudsonData.stealers.map((s: any) => {
+          const parts: string[] = [];
+          if (s.ip || s.ip_address) parts.push(`IP: ${s.ip || s.ip_address}`);
+          if (s.malware) parts.push(`Malware: ${s.malware}`);
+          if (s.domain) parts.push(`Domínio: ${s.domain}`);
+          if (s.date || s.first_seen) parts.push(`Data: ${s.date || s.first_seen}`);
+          if (s.computer_name) parts.push(`PC: ${s.computer_name}`);
+          if (s.operating_system) parts.push(`OS: ${s.operating_system}`);
+          return parts.join(" ─ ");
+        }),
+      });
+    }
+
+    if (xposedData) {
+      const list = (xposedData.breaches?.[0] ?? []).filter(Boolean);
+      sections.push({
+        title: "XposedOrNot — Vazamento",
+        fields: [{ label: "Total breaches", value: String(list.length), warn: list.length > 0 }],
+        list: list.length ? list : ["Nenhum"],
+      });
+    }
+
+    if (emailRepData) {
+      sections.push({
+        title: "EmailRep — Reputação",
+        collapsible: true,
+        fields: [
+          { label: "Reputação", value: emailRepData.reputation ?? "—", ok: emailRepData.reputation === "high", warn: emailRepData.reputation === "low" },
+          { label: "Suspeito", value: emailRepData.suspicious ? "Sim" : "Não", warn: !!emailRepData.suspicious },
+          { label: "Credenciais vazadas", value: emailRepData.details?.credentials_leaked ? "Sim" : "Não", warn: !!emailRepData.details?.credentials_leaked },
+        ],
+      });
+    }
+
+    const stealerIps = [
+      ...(hudsonData?.stealers?.map((s: any) => s.ip || s.ip_address || "").filter(Boolean) || []),
+      ...(intelxData?.ips || []),
+    ];
+    const uniqueStealerIps = [...new Set(stealerIps)].filter(Boolean);
+    if (uniqueStealerIps.length > 0) {
+      const ipCards = await enrichIps(uniqueStealerIps);
+      if (ipCards.length > 0) {
+        sections.push({
+          title: `Endereços IP (${ipCards.length})`,
+          ipCards,
+        });
+      }
+    }
+  })();
+
   return {
     ok: true, tool: "email", query: email,
-    summary: `${sections.length} módulos consultados · ${foundCount} contas detectadas`,
+    summary: `${sections.length} módulos consultados`,
     sections, sources,
   };
 }
@@ -715,7 +649,7 @@ async function toolPassword(password: string): Promise<OsintResult> {
   // Query database for accounts/sites that leaked this password
   let leakResults: any[] = [];
   try {
-    const r = await botMultiPool.query(
+    const r = await botQuery(
       `SELECT url, email, senha, telefone, fonte FROM credentials WHERE senha = $1 LIMIT 500`,
       [password]
     );
@@ -837,7 +771,7 @@ async function toolDomain(domain: string): Promise<OsintResult> {
   // DATABASE LEAK SEARCH — query multi-pool for credentials from this domain
   let domainLeakResults: any[] = [];
   try {
-    const r = await botMultiPool.query(
+    const r = await botQuery(
       `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url ILIKE $1 LIMIT 100`,
       [`%${clean}%`]
     );
@@ -1129,7 +1063,7 @@ async function toolPhone(raw: string): Promise<OsintResult> {
   // 2) Query multi-database for leaks containing the phone number
   let leakResults: any[] = [];
   try {
-    const r = await botMultiPool.query(
+    const r = await botQuery(
       `SELECT url, email, senha, telefone, fonte FROM credentials WHERE telefone LIKE $1 LIMIT 100`,
       [`%${national}%`]
     );
@@ -1351,7 +1285,7 @@ async function toolUsername(username: string): Promise<OsintResult> {
   // 1. Query credentials multi-pool for leaks containing the username
   let leakResults: any[] = [];
   try {
-    const r = await botMultiPool.query(
+    const r = await botQuery(
       `SELECT url, email, senha, telefone, fonte FROM credentials WHERE email LIKE $1 LIMIT 50`,
       [`%${u}%`]
     );
@@ -1411,6 +1345,15 @@ async function toolUsername(username: string): Promise<OsintResult> {
     });
   }
 
+  const { ips: intelxIps } = await searchIntelx(u);
+  if (intelxIps.length > 0) {
+    const ipCards = await enrichIps(intelxIps);
+    sections.push({
+      title: `Endereços IP (${intelxIps.length})`,
+      ipCards,
+    });
+  }
+
   return {
     ok: true,
     tool: "username",
@@ -1422,46 +1365,147 @@ async function toolUsername(username: string): Promise<OsintResult> {
 }
 
 async function toolLink(url: string): Promise<OsintResult> {
+  const fetchUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  let hostname = "";
+  try { hostname = new URL(fetchUrl).hostname; } catch { hostname = url; }
+
+  const credPromise = botQuery(
+    `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url ILIKE $1 LIMIT 100`,
+    [`%${hostname}%`]
+  ).catch(() => ({ rows: [] }));
+
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const r = await fetch(url, { redirect: "follow", signal: ctrl.signal, headers: { "user-agent": "Mozilla/5.0 NoxIntel-OSINT" } });
+    const r = await fetch(fetchUrl, { redirect: "follow", signal: ctrl.signal, headers: { "user-agent": "Mozilla/5.0 NoxIntel-OSINT" } });
     clearTimeout(t);
     const text = await r.text();
     const title = text.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || "—";
     const desc = text.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)?.[1] || "—";
     const ogImage = text.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)?.[1] || "—";
     const u = new URL(r.url);
+    const sections: Section[] = [
+      {
+        title: "URL",
+        fields: [
+          { label: "Final URL", value: r.url, mono: true },
+          { label: "Status", value: String(r.status), ok: r.ok, warn: !r.ok },
+          { label: "Servidor", value: r.headers.get("server") || "—" },
+          { label: "Content-Type", value: r.headers.get("content-type") || "—" },
+          { label: "Host", value: u.hostname, mono: true },
+        ],
+      },
+      {
+        title: "Metadados",
+        fields: [
+          { label: "Title", value: title },
+          { label: "Description", value: desc },
+          { label: "OG image", value: ogImage, mono: true },
+        ],
+      },
+    ];
+    const sources = ["fetch + parse HTML"];
+
+    const credRows = (await credPromise).rows || [];
+    if (credRows.length > 0) {
+      const creds = buildCredentialCards(credRows);
+      sections.push({ title: `Credenciais vazadas (${creds.length})`, credentials: creds });
+      sources.push("banco de credenciais");
+    }
+
     return {
       ok: true,
       tool: "link",
       query: url,
       summary: `${r.status} • ${u.hostname} • ${title.slice(0, 80)}`,
-      sections: [
-        {
-          title: "URL",
-          fields: [
-            { label: "Final URL", value: r.url, mono: true },
-            { label: "Status", value: String(r.status), ok: r.ok, warn: !r.ok },
-            { label: "Servidor", value: r.headers.get("server") || "—" },
-            { label: "Content-Type", value: r.headers.get("content-type") || "—" },
-            { label: "Host", value: u.hostname, mono: true },
-          ],
-        },
-        {
-          title: "Metadados",
-          fields: [
-            { label: "Title", value: title },
-            { label: "Description", value: desc },
-            { label: "OG image", value: ogImage, mono: true },
-          ],
-        },
-      ],
-      sources: ["fetch + parse HTML"],
+      sections,
+      sources,
+    };
+  } catch {
+    const credRows = (await credPromise).rows || [];
+    const sections: Section[] = [];
+    const sources: string[] = [];
+    if (credRows.length > 0) {
+      const creds = buildCredentialCards(credRows);
+      sections.push({ title: `Credenciais vazadas (${creds.length})`, credentials: creds });
+      sources.push("banco de credenciais");
+    }
+    return {
+      ok: false,
+      tool: "link",
+      query: url,
+      error: "Falha ao acessar o link — domínio inexistente, recusou conexão ou timeout.",
+      sections,
+      sources,
     };
   } finally {
     clearTimeout(t);
   }
+}
+
+async function toolUrlLogins(url: string): Promise<OsintResult> {
+  const domain = url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").trim().toLowerCase();
+
+  let allRows: any[] = [];
+  try {
+    const botResult = await botQuery(
+      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url LIKE $1 OR url LIKE $2 OR url LIKE $3 OR url LIKE $4 OR url LIKE $5 LIMIT 5000`,
+      [`http://${domain}%`, `https://${domain}%`, `http://www.${domain}%`, `https://www.${domain}%`, `${domain}%`]
+    );
+    allRows = botResult.rows || [];
+  } catch (e: any) {
+    console.error("[toolUrlLogins] botMultiPool error:", e?.message);
+  }
+
+  const rows = buildCredentialCards(allRows);
+
+  const uniqueEmails = new Set(allRows.map(r => r.email).filter(Boolean));
+  const uniquePasswords = new Set(allRows.map(r => r.senha).filter(Boolean));
+
+  const sections: Section[] = [];
+  const sources: string[] = [];
+
+  if (rows.length > 0) {
+    sections.push({
+      title: `Credenciais vazadas para "${domain}"`,
+      fields: [
+        { label: "Total", value: String(rows.length) },
+        { label: "Emails únicos", value: String(uniqueEmails.size) },
+        { label: "Senhas únicas", value: String(uniquePasswords.size) },
+      ],
+    });
+    sections.push({ title: `Credenciais (${rows.length})`, credentials: rows });
+    sources.push("banco de dados");
+  } else {
+    sections.push({ title: "Resultado", fields: [{ label: "Status", value: "Nenhuma credencial encontrada para este domínio.", warn: true }] });
+  }
+
+  sections.push({
+    title: "Bases de vazamento externas",
+    fields: [
+      { label: "Domínio", value: domain, mono: true },
+      { label: "LeakCheck", value: "Pesquise credenciais do domínio" },
+      { label: "Snusbase", value: "Busca por domínio em dumps" },
+      { label: "DeHashed", value: "Pesquise endereço nas bases" },
+      { label: "BreachDirectory", value: "Verifique domínio em breaches" },
+    ],
+    links: [
+      { label: "LeakCheck", url: `https://leakcheck.io/search?query=${encodeURIComponent(domain)}` },
+      { label: "Snusbase", url: `https://snusbase.com/search?query=${encodeURIComponent(domain)}` },
+      { label: "DeHashed", url: `https://dehashed.com/search?query=${encodeURIComponent(domain)}` },
+      { label: "BreachDirectory", url: `https://breachdirectory.org/search?query=${encodeURIComponent(domain)}` },
+      { label: "IntelX", url: `https://intelx.io/?s=${encodeURIComponent(domain)}` },
+    ],
+  });
+
+  return {
+    ok: true,
+    tool: "urllogins",
+    query: url,
+    summary: `${rows.length} credenciais encontradas · ${uniqueEmails.size} emails · ${uniquePasswords.size} senhas`,
+    sections,
+    sources,
+  };
 }
 
 async function toolBlockchain(addr: string): Promise<OsintResult> {
@@ -1792,6 +1836,31 @@ export const Route = createFileRoute("/api/osint")({
         if (!tokenPayload) {
           return json({ ok: false, tool, query, error: "Sessão inválida ou expirada.", sections: [], sources: [] }, 401);
         }
+        // --- Quota check ---
+        try {
+          const { noxPool } = await import("@/lib/db");
+          const today = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+          const sub = await noxPool.query(
+            `SELECT p.daily_search_limit FROM subscriptions s JOIN plans p ON p.id = s.plan_id WHERE s.user_id = $1 AND s.status = 'active' AND s.expires_at > now() LIMIT 1`,
+            [tokenPayload.userId]
+          );
+          const limit = sub.rows[0]?.daily_search_limit ?? 5;
+          const usage = await noxPool.query(
+            `SELECT searches FROM search_usage WHERE user_id = $1 AND day = $2`,
+            [tokenPayload.userId, today]
+          );
+          const todaySearches = usage.rows[0]?.searches ?? 0;
+          if (todaySearches >= limit) {
+            return json({
+              ok: false, tool, query,
+              error: `Limite diário de ${limit} buscas atingido. Volte amanhã ou faça upgrade do seu plano.`,
+              sections: [], sources: [],
+            }, 429);
+          }
+        } catch (e) {
+          console.error("Quota check error:", e);
+        }
+
         try {
           let r: OsintResult;
           switch (tool) {
@@ -1804,6 +1873,7 @@ export const Route = createFileRoute("/api/osint")({
             case "phone": r = await toolPhone(query); break;
             case "username": r = await toolUsername(query); break;
             case "link": r = await toolLink(query); break;
+            case "urllogins": r = await toolUrlLogins(query); break;
             case "blockchain": r = await toolBlockchain(query); break;
             case "social": r = await toolSocial(query); break;
             case "name": r = await toolName(query); break;

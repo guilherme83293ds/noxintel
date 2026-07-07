@@ -1,59 +1,39 @@
 import { useEffect, useState } from "react";
-import { NoxLogo } from "@/components/NoxLogo";
 
-export function LoadingScreen({ durationMs = 1600 }: { durationMs?: number }) {
-  const [show, setShow] = useState(true);
-  const [fading, setFading] = useState(false);
+export function LoadingScreen() {
+  const [phase, setPhase] = useState<"show" | "fade" | "hidden">("show");
 
   useEffect(() => {
-    const t1 = setTimeout(() => setFading(true), durationMs - 350);
-    const t2 = setTimeout(() => setShow(false), durationMs);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [durationMs]);
+    const t1 = setTimeout(() => setPhase("fade"), 2600);
+    const t2 = setTimeout(() => setPhase("hidden"), 3000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
 
-  if (!show) return null;
+  if (phase === "hidden") return null;
 
   return (
     <div
-      className={`fixed inset-0 z-[100] flex items-center justify-center bg-background transition-opacity duration-300 ${
-        fading ? "opacity-0" : "opacity-100"
+      className={`fixed inset-0 z-[100] flex items-center justify-center transition-opacity duration-500 ${
+        phase === "fade" ? "opacity-0" : "opacity-100"
       }`}
-      aria-hidden={fading}
+      style={{ background: "linear-gradient(180deg, #0a0e1a 0%, #0d1225 50%, #0a0e1a 100%)" }}
     >
-      {/* animated grid */}
-      <div className="loader-grid absolute inset-0 opacity-40" />
-      {/* radial glow */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_50%_40%_at_50%_50%,rgba(42,143,196,0.35),transparent_70%)]" />
-
-      <div className="relative flex flex-col items-center" style={{ perspective: "1200px" }}>
-        {/* 3D orb */}
-        <div className="loader-orb relative h-32 w-32">
-          <div className="loader-ring loader-ring-1" />
-          <div className="loader-ring loader-ring-2" />
-          <div className="loader-ring loader-ring-3" />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="loader-core">
-              <NoxLogo className="h-16 w-auto" />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-10 flex flex-col items-center">
-          <span className="text-sm font-bold tracking-[0.4em] text-foreground">
-            NOXINTEL
-          </span>
-          <span className="mt-2 text-xs uppercase tracking-[0.3em] text-muted-foreground">
-            Inicializando inteligência
-          </span>
-          {/* progress bar */}
-          <div className="mt-5 h-[3px] w-48 overflow-hidden rounded-full bg-secondary">
-            <div className="loader-bar h-full w-1/3 rounded-full bg-gradient-primary" />
-          </div>
-        </div>
-      </div>
+      <img
+        src="/logo.png"
+        alt="NoxIntel"
+        className="h-auto"
+        style={{
+          width: "min(60vw, 400px)",
+          filter: "drop-shadow(0 0 40px rgba(42,143,196,0.35))",
+          animation: "logo-pulse 2s ease-in-out infinite",
+        }}
+      />
+      <style>{`
+        @keyframes logo-pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.03); opacity: 0.85; }
+        }
+      `}</style>
     </div>
   );
 }

@@ -107,6 +107,19 @@ export async function ensureDb() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
     await noxPool.query(NOX_SCHEMA_SQL);
+    await noxPool.query(`
+      INSERT INTO plans (id, name, price_brl, daily_search_limit, monthly_result_limit, sort, features, active) VALUES
+      ('economic', 'Economic', 5.45, 50, 300, 1, '[]'::jsonb, true),
+      ('starter', 'Starter', 4.12, 15, 250, 2, '[]'::jsonb, true),
+      ('premium', 'Premium', 8.20, 50, 500, 3, '[]'::jsonb, true),
+      ('advanced', 'Advanced', 10.95, 100, 800, 4, '[]'::jsonb, true),
+      ('vip', 'VIP', 13.70, 200, 1000, 5, '[]'::jsonb, true),
+      ('ultra15', 'Ultra 15D', 19.20, 500, 5000, 6, '[]'::jsonb, true),
+      ('ultra30', 'Ultra 30D', 19.20, 500, 5000, 7, '[]'::jsonb, true),
+      ('elite15', 'Elite 15D', 45.00, 999999, 50000, 8, '[]'::jsonb, true),
+      ('elite', 'Elite', 82.50, 999999, 50000, 9, '[]'::jsonb, true)
+      ON CONFLICT (id) DO NOTHING;
+    `);
     initialized = true;
   })();
   return initPromise;

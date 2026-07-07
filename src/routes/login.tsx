@@ -1,12 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { NoxLogo } from "@/components/NoxLogo";
 import { Mail, Lock, User, ArrowRight, AlertTriangle, CheckCircle2, Loader2, Activity, Terminal, Cpu, Globe, Shield, Instagram, Send } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { doLogin, doSignup } from "@/lib/auth.functions";
 import { setToken } from "@/lib/session";
 import { TermsDialog } from "@/components/TermsDialog";
 
 export const Route = createFileRoute("/login")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Entrar — NoxIntel" },
@@ -28,20 +29,36 @@ function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [showTerms, setShowTerms] = useState(false);
-  const [showVideo, setShowVideo] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const isDev = import.meta.env.DEV;
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(isDev ? "dev-mode" : null);
+  const turnstileRef = useRef<HTMLDivElement>(null);
 
-  // 3D tilt
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [tilt, setTilt] = useState({ rx: 0, ry: 0, mx: 50, my: 50 });
-  function onMouseMove(e: React.MouseEvent) {
-    const r = cardRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const x = (e.clientX - r.left) / r.width;
-    const y = (e.clientY - r.top) / r.height;
-    setTilt({ rx: (0.5 - y) * 6, ry: (x - 0.5) * 8, mx: x * 100, my: y * 100 });
-  }
-  function onMouseLeave() { setTilt({ rx: 0, ry: 0, mx: 50, my: 50 }); }
+  useEffect(() => {
+    if (isDev || !turnstileRef.current || typeof window === "undefined") return;
+    const id = "turnstile-" + Math.random().toString(36).slice(2);
+    turnstileRef.current.id = id;
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad";
+    script.async = true;
+    script.defer = true;
+    document.body.appendChild(script);
+    let timeout: ReturnType<typeof setTimeout>;
+    const check = () => {
+      if ((window as any).turnstile) {
+        (window as any).turnstile.render("#" + id, {
+          sitekey: import.meta.env.VITE_TURNSTILE_SITE_KEY,
+          theme: "dark",
+          callback: (token: string) => setTurnstileToken(token),
+          "expired-callback": () => setTurnstileToken(null),
+        });
+      } else {
+        timeout = setTimeout(check, 100);
+      }
+    };
+    check();
+    return () => { clearTimeout(timeout); script.remove(); };
+  }, []);
+
 
   type BreachStatus = { state: "idle" | "checking" | "safe" | "error" } | { state: "breached"; breaches: string[] };
   const [breach, setBreach] = useState<BreachStatus>({ state: "idle" });
@@ -67,19 +84,21 @@ function LoginPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!turnstileToken) { setError("Aguardando verificação do captcha"); return; }
     setError(null); setInfo(null);
     setLoading(true);
     try {
       if (mode === "signup") {
         if (password !== confirmPassword) { setError("As senhas não conferem"); setLoading(false); return; }
-        const res = await doSignup({ data: { email, password, fullName: name } });
+        const res = await doSignup({ data: { email, password, fullName: name, turnstileToken } });
         setToken(res.token);
+        if (sessionStorage.getItem("terms_accepted")) { navigate({ to: "/dashboard" }); } else { setShowTerms(true); }
       } else {
-        const res = await doLogin({ data: { email, password } });
+        const res = await doLogin({ data: { email, password, turnstileToken } });
         setToken(res.token);
+        if (sessionStorage.getItem("terms_accepted")) { navigate({ to: "/dashboard" }); } else { setShowTerms(true); }
       }
-      setShowVideo(true);
-      videoRef.current?.play();
+
     } catch (err: any) {
       setError(err.message || "Erro ao autenticar");
     } finally { setLoading(false); }
@@ -101,7 +120,7 @@ function LoginPage() {
 
         {/* Central logo */}
         <div className="flex flex-col items-center justify-center z-10 p-4 gap-6">
-          <NoxLogo className="h-auto w-auto max-h-[75vh] max-w-[90%] animate-logo-glow" />
+          <NoxLogo className="h-auto w-auto max-h-[90vh] max-w-[95%] animate-logo-glow" />
           <div className="flex items-center gap-4">
             <a href="https://instagram.com/seu-usuario" target="_blank" rel="noopener noreferrer" className="text-white/60 hover:text-primary-glow transition-colors duration-200 hover:scale-110">
               <Instagram className="h-6 w-6" />
@@ -130,19 +149,19 @@ function LoginPage() {
       </div>
 
       {/* Right side: Elegant Glassmorphic Login Form (Mobile & Desktop) */}
-      <div className="col-span-12 lg:col-span-6 xl:col-span-5 flex flex-col justify-between p-6 md:p-12 relative min-h-screen z-10 bg-background/40 backdrop-blur-sm" style={{ perspective: "1200px" }}>
+      <div className="col-span-12 lg:col-span-6 xl:col-span-5 flex flex-col justify-between p-4 sm:p-6 md:p-12 relative min-h-screen z-10 bg-background/40" style={{ perspective: "1200px" }}>
         
         {/* Glow orbs background (Mobile/Tablet friendly) */}
         <div className="absolute inset-0 -z-10 lg:hidden">
-          <div className="absolute top-10 right-10 h-[250px] w-[250px] rounded-full bg-primary/10 blur-3xl animate-pulse" />
-          <div className="absolute bottom-10 left-10 h-[250px] w-[250px] rounded-full bg-blue-500/10 blur-3xl animate-pulse" style={{ animationDelay: "2s" }} />
+          <div className="absolute top-10 right-10 h-[250px] w-[250px] rounded-full bg-primary/10 animate-pulse" />
+          <div className="absolute bottom-10 left-10 h-[250px] w-[250px] rounded-full bg-blue-500/10 animate-pulse" style={{ animationDelay: "2s" }} />
           <div className="grid-bg absolute inset-0 opacity-[0.25]" />
         </div>
 
         {/* Top Header */}
         <div className="flex justify-between items-center w-full z-10">
           <Link to="/" className="flex items-center gap-2 lg:hidden">
-            <NoxLogo className="h-14 w-auto" />
+            <NoxLogo className="h-9 w-auto sm:h-14" />
             <span className="text-sm font-bold tracking-wider">NOXINTEL</span>
           </Link>
           <span className="hidden lg:block h-9" /> {/* spacer */}
@@ -152,27 +171,10 @@ function LoginPage() {
         </div>
 
         {/* Center Card */}
-        <div className="my-auto py-10 w-full max-w-md mx-auto">
-          <div
-            ref={cardRef}
-            onMouseMove={onMouseMove}
-            onMouseLeave={onMouseLeave}
-            className="group relative rounded-3xl transition-transform duration-200 ease-out"
-            style={{ transform: `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg)`, transformStyle: "preserve-3d" }}
-          >
-            {/* Radial glow follow effect behind the card */}
-            <div
-              aria-hidden
-              className="pointer-events-none absolute -inset-px rounded-3xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-              style={{ background: `radial-gradient(400px circle at ${tilt.mx}% ${tilt.my}%, rgba(99,102,241,0.22), transparent 70%)`, filter: "blur(20px)" }}
-            />
-            {/* Glowing active outline border */}
-            <div aria-hidden className="pointer-events-none absolute -inset-[1px] rounded-3xl opacity-50 group-hover:opacity-100 transition-opacity duration-300"
-              style={{ background: "conic-gradient(from var(--angle,0deg), transparent 25%, rgba(59,130,246,0.6), rgba(99,102,241,0.7), transparent 75%)", animation: "spin 6s linear infinite", WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)", WebkitMaskComposite: "xor", maskComposite: "exclude", padding: "1.5px" }}
-            />
-
+          <div className="my-auto py-6 sm:py-10 w-full max-w-md mx-auto">
+          <div className="group relative rounded-3xl">
             {/* Inner glass form */}
-            <div className="relative rounded-3xl border border-border/60 bg-gradient-card p-6 sm:p-8.5 shadow-elevated backdrop-blur-2xl" style={{ transform: "translateZ(30px)" }}>
+            <div className="relative rounded-3xl border border-border/60 bg-gradient-card p-6 sm:p-8.5 shadow-elevated">
               {/* Tab Mode toggle */}
               <div className="mb-7 flex rounded-full border border-border/40 bg-input/20 p-1">
                 {(["signin", "signup"] as const).map((m) => (
@@ -245,7 +247,9 @@ function LoginPage() {
                 {error && <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs.5 text-destructive font-medium animate-[fadeIn_0.2s_ease-out]">{error}</p>}
                 {info && <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs.5 text-emerald-400 font-medium animate-[fadeIn_0.2s_ease-out]">{info}</p>}
 
-                <button type="submit" aria-busy={loading}
+                {!isDev && <div ref={turnstileRef} className="flex justify-center my-4" />}
+
+                <button type="submit" disabled={!turnstileToken} aria-busy={loading}
                   className="group/btn relative inline-flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-full py-4 text-base font-bold text-white transition-all duration-300 hover:opacity-90 active:scale-[0.98] aria-busy:opacity-70 border-0"
                   style={{ background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 6px 0 rgba(255, 255, 255, 0.05), 0 -2px 0 0 rgba(0, 0, 0, 0.25) inset, 0 1px 0 0 rgba(255, 255, 255, 0.35) inset" }}>
                   <span aria-hidden className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover/btn:translate-x-full" />
@@ -288,31 +292,9 @@ function LoginPage() {
         }
       `}</style>
 
-      {showVideo && (
-        <div className="fixed inset-0 z-50 bg-black">
-          <video
-            ref={videoRef}
-            src="/loginvideo.mp4"
-            autoPlay
-            muted
-            playsInline
-            preload="auto"
-            className="h-full w-full object-cover"
-            onEnded={() => { setShowVideo(false); setShowTerms(true); }}
-            onClick={() => { setShowVideo(false); setShowTerms(true); }}
-          />
-          <button
-            onClick={() => { setShowVideo(false); setShowTerms(true); }}
-            className="absolute bottom-8 left-1/2 -translate-x-1/2 rounded-full bg-white/10 px-6 py-2 text-sm text-white/70 backdrop-blur-sm transition hover:bg-white/20 hover:text-white z-10"
-          >
-            Pular
-          </button>
-        </div>
-      )}
-
       <TermsDialog
         open={showTerms}
-        onAccept={() => { setShowTerms(false); navigate({ to: "/dashboard" }); }}
+        onAccept={() => { sessionStorage.setItem("terms_accepted", "1"); setShowTerms(false); navigate({ to: "/dashboard" }); }}
         onCancel={() => { setShowTerms(false); }}
       />
     </div>

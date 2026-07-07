@@ -67,6 +67,26 @@ export const listMyPayments = createServerFn({ method: "GET" })
     return rows;
   });
 
+let bosspayToken: { token: string; expiresAt: number } | null = null;
+
+async function getBosspayToken() {
+  const clientId = process.env.BOSSPAY_CLIENT_ID;
+  const clientSecret = process.env.BOSSPAY_CLIENT_SECRET;
+  const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
+  if (!clientId || !clientSecret) return null;
+  if (bosspayToken && Date.now() < bosspayToken.expiresAt) return bosspayToken.token;
+  const basic = btoa(`${clientId}:${clientSecret}`);
+  const r = await fetch(`${apiBase}/token`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) return null;
+  const d = await r.json();
+  bosspayToken = { token: d.access_token, expiresAt: Date.now() + (d.expires_in - 60) * 1000 };
+  return d.access_token;
+}
+
 export const createPixPayment = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .inputValidator((d: { planId: string }) => d)
@@ -78,6 +98,32 @@ export const createPixPayment = createServerFn({ method: "POST" })
 
     const { rows: profileRows } = await noxPool.query("SELECT email, full_name FROM profiles WHERE id = $1", [context.userId]);
     const profile = profileRows[0];
+
+    const token = await getBosspayToken();
+    if (token) {
+      const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
+      const origin = getRequestHeader("origin") || process.env.SITE_URL || "http://localhost:8080";
+      const externalId = `nox_${context.userId}_${Date.now()}`;
+      const postbackUrl = origin.includes("localhost")
+        ? (process.env.SITE_URL || "https://noxintel.app") + "/api/public/bosspay-webhook"
+        : `${origin}/api/public/bosspay-webhook`;
+
+      const pixRes = await fetch(`${apiBase}/pix`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(plan.price_brl), external_id: externalId, postback_url: postbackUrl }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (pixRes.ok) {
+        const pix = await pixRes.json();
+        const { rows: paymentRows } = await noxPool.query(
+          `INSERT INTO payments (user_id, plan_id, amount_brl, pix_key, pix_txid, pix_qr_code, pix_copy_paste, pix_expires_at, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
+          [context.userId, plan.id, plan.price_brl, pix.transaction_id || "bosspay", externalId, pix.qr_code || null, pix.qr_code_base64 || null, null]
+        );
+        return paymentRows[0];
+      }
+    }
 
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" as any });
@@ -107,8 +153,8 @@ export const createPixPayment = createServerFn({ method: "POST" })
 
     const { rows: paymentRows } = await noxPool.query(
       `INSERT INTO payments (user_id, plan_id, amount_brl, pix_key, pix_txid, stripe_payment_intent_id, pix_copy_paste, pix_expires_at, status)
-       VALUES ($1, $2, $3, 'stripe_checkout', $4, $5, $6, $7, 'pending') RETURNING *`,
-      [context.userId, plan.id, plan.price_brl, session.id, typeof session.payment_intent === "string" ? session.payment_intent : null, session.url, session.expires_at ? new Date(session.expires_at * 1000).toISOString() : null]
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
+      [context.userId, plan.id, plan.price_brl, "stripe_checkout", session.id, typeof session.payment_intent === "string" ? session.payment_intent : null, session.url, session.expires_at ? new Date(session.expires_at * 1000).toISOString() : null]
     );
     return paymentRows[0];
   });
@@ -121,7 +167,29 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
     const { rows } = await noxPool.query("SELECT * FROM payments WHERE id = $1 AND user_id = $2", [data.paymentId, context.userId]);
     const p = rows[0];
     if (!p) throw new Error("not_found");
-    if (p.status === "paid") return { status: "paid" };
+    if (p.status === "paid" || p.status === "approved") return { status: "paid" };
+
+    if (p.pix_key !== "stripe_checkout" && p.pix_key) {
+      const token = await getBosspayToken();
+      if (token) {
+        const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
+        try {
+          const statusRes = await fetch(`${apiBase}/status?external_id=${encodeURIComponent(p.pix_txid)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (statusRes.ok) {
+            const st = await statusRes.json();
+            if (st.status === "approved") {
+              await noxPool.query("UPDATE payments SET status = 'paid' WHERE id = $1", [p.id]);
+              return { status: "paid" };
+            }
+            return { status: p.status, providerStatus: st.status };
+          }
+        } catch {}
+      }
+      return { status: p.status };
+    }
 
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" as any });
@@ -268,7 +336,7 @@ export const redeemLicenseKey = createServerFn({ method: "POST" })
       ["license_key_v2:" + data.key.trim()]
     );
     if (!lkRows.length) throw new Error("Chave inválida");
-    const lk = JSON.parse(lkRows[0].value);
+    const lk = lkRows[0].value;
     if (!lk.active) throw new Error("Chave já resgatada ou inativa");
     if (lk.user_id) throw new Error("Chave já resgatada");
 
@@ -358,7 +426,7 @@ export const listLicenseKeys = createServerFn({ method: "POST" })
     const { rows } = await noxPool.query(
       "SELECT value FROM app_settings WHERE key LIKE 'license_key_v2:%' ORDER BY updated_at DESC"
     );
-    return rows.map((r: any) => JSON.parse(r.value));
+    return rows.map((r: any) => r.value);
   });
 
 export const verifyAdminKey = createServerFn({ method: "POST" })
