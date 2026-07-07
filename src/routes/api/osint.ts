@@ -1455,7 +1455,8 @@ async function toolUrlLogins(url: string): Promise<OsintResult> {
        UNION ALL
        SELECT url, email, senha, telefone, fonte FROM credentials WHERE url LIKE $3
        LIMIT 100000`,
-      [`https://${domain}%`, `http://${domain}%`, `${domain}%`]
+      [`https://${domain}%`, `http://${domain}%`, `${domain}%`],
+      2000
     );
     allRows = botResult.rows || [];
   } catch (e: any) {

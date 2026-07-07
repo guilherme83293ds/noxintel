@@ -18,17 +18,19 @@ const botPools = DB_URLS.map(url => new Pool({
 
 export function ensureBotIndexes() {}
 
-async function queryPool(pool: pg.Pool, sql: string, params?: any[]) {
+async function queryPool(pool: pg.Pool, sql: string, params?: any[], timeoutMs?: number) {
   try {
-    return await pool.query({ text: sql, values: params });
+    const opts: any = { text: sql, values: params };
+    if (timeoutMs) opts.signal = AbortSignal.timeout(timeoutMs);
+    return await pool.query(opts);
   } catch {
     return { rows: [] };
   }
 }
 
-export async function botQuery(sql: string, params?: any[]) {
+export async function botQuery(sql: string, params?: any[], timeoutMs?: number) {
   const results = await Promise.allSettled(
-    botPools.map(pool => queryPool(pool, sql, params))
+    botPools.map(pool => queryPool(pool, sql, params, timeoutMs))
   );
   const seen = new Set<string>();
   const merged = { rows: [] as any[] };
