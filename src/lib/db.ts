@@ -115,10 +115,10 @@ export async function ensureDb() {
       ('advanced', 'Advanced', 10.95, 100, 800, 4, '[]'::jsonb, true),
       ('vip', 'VIP', 13.70, 200, 1000, 5, '[]'::jsonb, true),
       ('ultra15', 'Ultra 15D', 19.20, 500, 5000, 6, '[]'::jsonb, true),
-      ('ultra30', 'Ultra 30D', 19.20, 500, 5000, 7, '[]'::jsonb, true),
+      ('ultra30', 'Ultra 30D', 29.90, 500, 5000, 7, '[]'::jsonb, true),
       ('elite15', 'Elite 15D', 45.00, 999999, 50000, 8, '[]'::jsonb, true),
       ('elite', 'Elite', 82.50, 999999, 50000, 9, '[]'::jsonb, true)
-      ON CONFLICT (id) DO NOTHING;
+      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price_brl = EXCLUDED.price_brl, daily_search_limit = EXCLUDED.daily_search_limit, monthly_result_limit = EXCLUDED.monthly_result_limit, sort = EXCLUDED.sort;
     `);
     initialized = true;
   })();
