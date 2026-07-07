@@ -96,67 +96,36 @@ export const createPixPayment = createServerFn({ method: "POST" })
     if (!planRows.length) throw new Error("Plano não encontrado");
     const plan = planRows[0];
 
-    const { rows: profileRows } = await noxPool.query("SELECT email, full_name FROM profiles WHERE id = $1", [context.userId]);
-    const profile = profileRows[0];
-
-    const token = await getBosspayToken();
-    if (token) {
-      const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
-      const origin = getRequestHeader("origin") || process.env.SITE_URL || "http://localhost:8080";
-      const externalId = `nox_${context.userId}_${Date.now()}`;
-      const postbackUrl = origin.includes("localhost")
-        ? (process.env.SITE_URL || "https://noxintel.app") + "/api/public/bosspay-webhook"
-        : `${origin}/api/public/bosspay-webhook`;
-
-      const pixRes = await fetch(`${apiBase}/pix`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(plan.price_brl), external_id: externalId, postback_url: postbackUrl }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (pixRes.ok) {
-        const pix = await pixRes.json();
-        const { rows: paymentRows } = await noxPool.query(
-          `INSERT INTO payments (user_id, plan_id, amount_brl, pix_key, pix_txid, pix_qr_code, pix_copy_paste, pix_expires_at, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
-          [context.userId, plan.id, plan.price_brl, pix.transaction_id || "bosspay", externalId, pix.qr_code || null, pix.qr_code_base64 || null, null]
-        );
-        return paymentRows[0];
-      }
+    if (!process.env.BOSSPAY_CLIENT_ID || !process.env.BOSSPAY_CLIENT_SECRET) {
+      throw new Error("BossPay não configurado — adicione BOSSPAY_CLIENT_ID e BOSSPAY_CLIENT_SECRET nas variáveis de ambiente");
     }
 
-    if (!process.env.STRIPE_SECRET_KEY) throw new Error("BossPay indisponível e STRIPE_SECRET_KEY não configurada no servidor");
-
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" as any });
-
-    const amountCents = Math.round(Number(plan.price_brl) * 100);
+    const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
     const origin = getRequestHeader("origin") || process.env.SITE_URL || "http://localhost:8080";
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["pix"],
-      customer_email: profile?.email || undefined,
-      line_items: [{
-        quantity: 1,
-        price_data: {
-          currency: "brl",
-          unit_amount: amountCents,
-          product_data: { name: `NoxIntel — ${plan.name}` },
-        },
-      }],
-      payment_intent_data: {
-        description: `NoxIntel — ${plan.name}`,
-        receipt_email: profile?.email || undefined,
-        metadata: { user_id: context.userId, plan_id: plan.id, plan_name: plan.name },
-      },
-      success_url: `${origin}/conta`,
-      cancel_url: `${origin}/planos`,
-    });
+    const externalId = `nox_${context.userId}_${Date.now()}`;
+    const postbackUrl = origin.includes("localhost")
+      ? (process.env.SITE_URL || "https://noxintel.app") + "/api/public/bosspay-webhook"
+      : `${origin}/api/public/bosspay-webhook`;
 
+    const token = await getBosspayToken();
+    if (!token) throw new Error("BossPay: falha ao obter token de autenticação");
+
+    const pixRes = await fetch(`${apiBase}/pix`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: Number(plan.price_brl), external_id: externalId, postback_url: postbackUrl }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!pixRes.ok) {
+      const errText = await pixRes.text().catch(() => "");
+      throw new Error(`BossPay: erro ao criar PIX (${pixRes.status})${errText ? ` — ${errText}` : ""}`);
+    }
+
+    const pix = await pixRes.json();
     const { rows: paymentRows } = await noxPool.query(
-      `INSERT INTO payments (user_id, plan_id, amount_brl, pix_key, pix_txid, stripe_payment_intent_id, pix_copy_paste, pix_expires_at, status)
+      `INSERT INTO payments (user_id, plan_id, amount_brl, pix_key, pix_txid, pix_qr_code, pix_copy_paste, pix_expires_at, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
-      [context.userId, plan.id, plan.price_brl, "stripe_checkout", session.id, typeof session.payment_intent === "string" ? session.payment_intent : null, session.url, session.expires_at ? new Date(session.expires_at * 1000).toISOString() : null]
+      [context.userId, plan.id, plan.price_brl, pix.transaction_id || "bosspay", externalId, pix.qr_code || null, pix.qr_code_base64 || null, null]
     );
     return paymentRows[0];
   });
@@ -171,69 +140,26 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
     if (!p) throw new Error("not_found");
     if (p.status === "paid" || p.status === "approved") return { status: "paid" };
 
-    if (p.pix_key !== "stripe_checkout" && p.pix_key) {
-      const token = await getBosspayToken();
-      if (token) {
-        const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
-        try {
-          const statusRes = await fetch(`${apiBase}/status?external_id=${encodeURIComponent(p.pix_txid)}`, {
-            headers: { Authorization: `Bearer ${token}` },
-            signal: AbortSignal.timeout(10000),
-          });
-          if (statusRes.ok) {
-            const st = await statusRes.json();
-            if (st.status === "approved") {
-              await noxPool.query("UPDATE payments SET status = 'paid' WHERE id = $1", [p.id]);
-              return { status: "paid" };
-            }
-            return { status: p.status, providerStatus: st.status };
-          }
-        } catch {}
+    const token = await getBosspayToken();
+    if (!token) return { status: p.status };
+
+    const apiBase = process.env.BOSSPAY_API_BASE || "https://ojawuuxiahtattnpndai.supabase.co/functions/v1/api-gateway";
+    try {
+      const statusRes = await fetch(`${apiBase}/status?external_id=${encodeURIComponent(p.pix_txid)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (statusRes.ok) {
+        const st = await statusRes.json();
+        if (st.status === "approved") {
+          await noxPool.query("UPDATE payments SET status = 'paid' WHERE id = $1", [p.id]);
+          return { status: "paid" };
+        }
+        return { status: p.status, providerStatus: st.status };
       }
-      return { status: p.status };
-    }
-
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" as any });
-
-    if (!p.stripe_payment_intent_id && p.pix_txid?.startsWith("cs_")) {
-      const session: any = await stripe.checkout.sessions.retrieve(p.pix_txid, { expand: ["payment_intent"] });
-      const piId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
-      if (piId) await noxPool.query("UPDATE payments SET stripe_payment_intent_id = $1 WHERE id = $2 AND user_id = $3", [piId, p.id, context.userId]);
-      if (session.payment_status === "paid") {
-        await approvePaymentByPi(piId || p.pix_txid);
-        return { status: "paid" };
-      }
-      return { status: p.status, stripeStatus: session.payment_status };
-    }
-    if (!p.stripe_payment_intent_id) return { status: p.status };
-
-    const pi = await stripe.paymentIntents.retrieve(p.stripe_payment_intent_id);
-    if (pi.status === "succeeded") {
-      await approvePaymentByPi(pi.id);
-      return { status: "paid" };
-    }
-    return { status: p.status, stripeStatus: pi.status };
+    } catch {}
+    return { status: p.status };
   });
-
-async function approvePaymentByPi(piId: string) {
-  await ensureDb();
-  const { rows } = await noxPool.query(
-    `UPDATE payments SET status = 'paid' WHERE stripe_payment_intent_id = $1 AND status = 'pending' RETURNING user_id, plan_id`,
-    [piId]
-  );
-  if (rows.length > 0) {
-    const { user_id, plan_id } = rows[0];
-    const { rows: planRows } = await noxPool.query("SELECT daily_search_limit, monthly_result_limit FROM plans WHERE id = $1", [plan_id]);
-    const plan = planRows[0];
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30);
-    await noxPool.query(
-      `INSERT INTO subscriptions (user_id, plan_id, status, expires_at) VALUES ($1, $2, 'active', $3)`,
-      [user_id, plan_id, expiresAt.toISOString()]
-    );
-  }
-}
 
 export const submitPaymentProof = createServerFn({ method: "POST" })
   .middleware([requireAuth])
