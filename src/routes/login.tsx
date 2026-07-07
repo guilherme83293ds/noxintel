@@ -8,6 +8,7 @@ import { TermsDialog } from "@/components/TermsDialog";
 
 export const Route = createFileRoute("/login")({
   ssr: false,
+  validateSearch: (s: Record<string, unknown>) => ({ redirect: (s.redirect as string) || undefined }),
   head: () => ({
     meta: [
       { title: "Entrar — NoxIntel" },
@@ -19,6 +20,7 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const navigate = useNavigate();
+  const { redirect: redirectTo } = Route.useSearch();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -92,11 +94,11 @@ function LoginPage() {
         if (password !== confirmPassword) { setError("As senhas não conferem"); setLoading(false); return; }
         const res = await doSignup({ data: { email, password, fullName: name, turnstileToken } });
         setToken(res.token);
-        if (sessionStorage.getItem("terms_accepted")) { navigate({ to: "/dashboard" }); } else { setShowTerms(true); }
+        if (sessionStorage.getItem("terms_accepted")) { navigate({ to: redirectTo || "/dashboard" }); } else { setShowTerms(true); }
       } else {
         const res = await doLogin({ data: { email, password, turnstileToken } });
         setToken(res.token);
-        if (sessionStorage.getItem("terms_accepted")) { navigate({ to: "/dashboard" }); } else { setShowTerms(true); }
+        if (sessionStorage.getItem("terms_accepted")) { navigate({ to: redirectTo || "/dashboard" }); } else { setShowTerms(true); }
       }
 
     } catch (err: any) {
@@ -294,7 +296,7 @@ function LoginPage() {
 
       <TermsDialog
         open={showTerms}
-        onAccept={() => { sessionStorage.setItem("terms_accepted", "1"); setShowTerms(false); navigate({ to: "/dashboard" }); }}
+        onAccept={() => { sessionStorage.setItem("terms_accepted", "1"); setShowTerms(false); navigate({ to: redirectTo || "/dashboard" }); }}
         onCancel={() => { setShowTerms(false); }}
       />
     </div>

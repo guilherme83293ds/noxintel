@@ -3,9 +3,9 @@ import { getToken } from "@/lib/session";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
     const token = getToken();
-    if (!token) throw redirect({ to: "/login" });
+    if (!token) throw redirect({ to: "/login", search: { redirect: location.pathname } });
     return {};
   },
   component: () => <Outlet />,
