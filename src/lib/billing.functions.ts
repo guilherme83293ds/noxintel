@@ -153,6 +153,19 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
         const st = await statusRes.json();
         if (st.status === "approved") {
           await noxPool.query("UPDATE payments SET status = 'paid' WHERE id = $1", [p.id]);
+          const { rows: planRows } = await noxPool.query("SELECT * FROM plans WHERE id = $1", [p.plan_id]);
+          if (planRows.length > 0) {
+            const plan = planRows[0];
+            const expiresAt = new Date();
+            if (plan.period_days) expiresAt.setDate(expiresAt.getDate() + Number(plan.period_days));
+            else expiresAt.setDate(expiresAt.getDate() + 30);
+            await noxPool.query(
+              `INSERT INTO subscriptions (user_id, plan_id, status, expires_at)
+               VALUES ($1, $2, 'active', $3)
+               ON CONFLICT (user_id) DO UPDATE SET plan_id = $2, status = 'active', expires_at = $3`,
+              [p.user_id, p.plan_id, expiresAt.toISOString()]
+            );
+          }
           return { status: "paid" };
         }
         return { status: p.status, providerStatus: st.status };
