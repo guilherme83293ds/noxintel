@@ -1449,7 +1449,7 @@ async function toolUrlLogins(url: string): Promise<OsintResult> {
   let allRows: any[] = [];
   try {
     const botResult = await botQuery(
-      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url LIKE $1 OR url LIKE $2 OR url LIKE $3 OR url LIKE $4 OR url LIKE $5 LIMIT 5000`,
+      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url LIKE $1 OR url LIKE $2 OR url LIKE $3 OR url LIKE $4 OR url LIKE $5 LIMIT 100000`,
       [`http://${domain}%`, `https://${domain}%`, `http://www.${domain}%`, `https://www.${domain}%`, `${domain}%`]
     );
     allRows = botResult.rows || [];
