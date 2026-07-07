@@ -131,33 +131,7 @@ function BuyPage() {
                   )}
                 </div>
 
-                {payment.pix_copy_paste?.startsWith("data:image") && (
-                  <div className="flex flex-col items-center gap-4 mb-6">
-                    <div className="relative group">
-                      <div aria-hidden className="absolute -inset-3 rounded-2xl opacity-0 transition-opacity duration-500 group-hover:opacity-100" style={{ background: "radial-gradient(ellipse at center, rgba(42,143,196,0.2), transparent 70%)" }} />
-                      <div className="relative rounded-xl bg-gradient-to-br from-[#0d1b2a] via-[#1b2838] to-[#0d1b2a] p-3 sm:p-4 shadow-[0_0_30px_rgba(42,143,196,0.15)]">
-                        <div aria-hidden className="pointer-events-none absolute inset-0 rounded-xl border border-white/[0.06]" />
-                        <div aria-hidden className="pointer-events-none absolute inset-0 rounded-xl" style={{ background: "linear-gradient(135deg, rgba(42,143,196,0.1), transparent 50%, rgba(90,184,224,0.05))" }} />
-                        <img
-                          src={payment.pix_copy_paste}
-                          alt="QR Code PIX"
-                          className="relative h-52 w-52 sm:h-56 sm:w-56 rounded-lg"
-                          style={{ filter: "hue-rotate(0deg) saturate(1.2)" }}
-                        />
-                      </div>
-                    </div>
-                    {payment.pix_qr_code && (
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(payment.pix_qr_code); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                        className="group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] px-5 py-2.5 text-xs font-semibold tracking-wider text-white/70 transition-all hover:border-[#2a8fc4]/30 hover:bg-[#2a8fc4]/[0.06] hover:text-white"
-                      >
-                        <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-                        <Copy className="h-3.5 w-3.5" />
-                        {copied ? "Copiado!" : "Copiar código PIX"}
-                      </button>
-                    )}
-                  </div>
-                )}
+                {payment.pix_copy_paste?.startsWith("data:image") && <BlueQR src={payment.pix_copy_paste} pixCode={payment.pix_qr_code} copied={copied} onCopy={() => { navigator.clipboard.writeText(payment.pix_qr_code); setCopied(true); setTimeout(() => setCopied(false), 2000); }} />}
 
                 {!payment.pix_copy_paste?.startsWith("data:image") && payment.pix_copy_paste?.startsWith("http") && (
                   <a href={payment.pix_copy_paste} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#2a8fc4] to-[#5ab8e0] px-5 py-3 text-sm font-bold text-white shadow-lg shadow-[#2a8fc4]/20 transition-all hover:scale-[1.02]">
@@ -200,6 +174,65 @@ function BuyPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function BlueQR({ src, pixCode, copied, onCopy }: { src: string; pixCode: string; copied: boolean; onCopy: () => void }) {
+  const [blueSrc, setBlueSrc] = useState("");
+
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.width;
+      c.height = img.height;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height);
+      for (let i = 0; i < d.data.length; i += 4) {
+        const brightness = 0.299 * d.data[i] + 0.587 * d.data[i + 1] + 0.114 * d.data[i + 2];
+        if (brightness < 160) {
+          d.data[i] = 42;
+          d.data[i + 1] = 143;
+          d.data[i + 2] = 196;
+          d.data[i + 3] = 255;
+        } else {
+          d.data[i + 3] = 0;
+        }
+      }
+      ctx.putImageData(d, 0, 0);
+      setBlueSrc(c.toDataURL("image/png"));
+    };
+    img.src = src;
+  }, [src]);
+
+  if (!blueSrc) {
+    return (
+      <div className="flex flex-col items-center gap-4 mb-6">
+        <div className="h-52 w-52 sm:h-56 sm:w-56 rounded-lg bg-[#0d1b2a] animate-pulse" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-4 mb-6">
+      <div className="relative group">
+        <div aria-hidden className="absolute -inset-3 rounded-2xl opacity-0 transition-opacity duration-500 group-hover:opacity-100" style={{ background: "radial-gradient(ellipse at center, rgba(42,143,196,0.2), transparent 70%)" }} />
+        <div className="relative rounded-xl bg-gradient-to-br from-[#0d1b2a] via-[#1b2838] to-[#0d1b2a] p-3 sm:p-4 shadow-[0_0_30px_rgba(42,143,196,0.15)]">
+          <div aria-hidden className="pointer-events-none absolute inset-0 rounded-xl border border-white/[0.06]" />
+          <div aria-hidden className="pointer-events-none absolute inset-0 rounded-xl" style={{ background: "linear-gradient(135deg, rgba(42,143,196,0.1), transparent 50%, rgba(90,184,224,0.05))" }} />
+          <img src={blueSrc} alt="QR Code PIX" className="relative h-52 w-52 sm:h-56 sm:w-56 rounded-lg" />
+        </div>
+      </div>
+      {pixCode && (
+        <button onClick={onCopy} className="group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] px-5 py-2.5 text-xs font-semibold tracking-wider text-white/70 transition-all hover:border-[#2a8fc4]/30 hover:bg-[#2a8fc4]/[0.06] hover:text-white">
+          <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+          <Copy className="h-3.5 w-3.5" />
+          {copied ? "Copiado!" : "Copiar código PIX"}
+        </button>
+      )}
     </div>
   );
 }
