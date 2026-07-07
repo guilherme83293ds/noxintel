@@ -2,7 +2,8 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { NoxLogo } from "@/components/NoxLogo";
 import { Mail, Lock, User, ArrowRight, AlertTriangle, CheckCircle2, Loader2, Activity, Terminal, Cpu, Globe, Shield, Instagram, Send } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
-import { doLogin, doSignup } from "@/lib/auth.functions";
+import { useServerFn } from "@tanstack/react-start";
+import { doLogin, doSignup, checkEmailBreach } from "@/lib/auth.functions";
 import { setToken } from "@/lib/session";
 import { TermsDialog } from "@/components/TermsDialog";
 
@@ -64,6 +65,7 @@ function LoginPage() {
 
   type BreachStatus = { state: "idle" | "checking" | "safe" | "error" } | { state: "breached"; breaches: string[] };
   const [breach, setBreach] = useState<BreachStatus>({ state: "idle" });
+  const checkBreach = useServerFn(checkEmailBreach);
 
   useEffect(() => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setBreach({ state: "idle" }); return; }
@@ -71,14 +73,17 @@ function LoginPage() {
     const t = setTimeout(async () => {
       setBreach({ state: "checking" });
       try {
-        const res = await fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(email)}`, { signal: ctrl.signal });
-        if (res.status === 404) return setBreach({ state: "safe" });
-        if (!res.ok) throw new Error();
-        const data: { breaches?: string[][] } = await res.json();
-        const list = (data.breaches?.[0] ?? []).filter(Boolean);
-        setBreach(list.length ? { state: "breached", breaches: list } : { state: "safe" });
-      } catch (err) {
-        if ((err as any).name !== "AbortError") setBreach({ state: "error" });
+        const res = await checkBreach({ data: { email } });
+        if (ctrl.signal.aborted) return;
+        if (res.state === "breached" && res.breaches.length > 0) {
+          setBreach({ state: "breached", breaches: res.breaches });
+        } else if (res.state === "safe") {
+          setBreach({ state: "safe" });
+        } else {
+          setBreach({ state: "error" });
+        }
+      } catch {
+        if (!ctrl.signal.aborted) setBreach({ state: "error" });
       }
     }, 600);
     return () => { clearTimeout(t); ctrl.abort(); };

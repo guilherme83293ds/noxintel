@@ -46,6 +46,21 @@ export const doGetMe = createServerFn({ method: "GET" })
     return { id: context.userId, email: context.email, profile: context.profile };
   });
 
+export const checkEmailBreach = createServerFn({ method: "POST" })
+  .inputValidator((d: { email: string }) => d)
+  .handler(async ({ data }) => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) return { state: "invalid" };
+    try {
+      const { botQuery } = await import("./bot-db");
+      const result = await botQuery("SELECT DISTINCT fonte FROM credentials WHERE email = $1 LIMIT 500", [data.email.trim()]);
+      const sources = result.rows.map((r: any) => r.fonte).filter(Boolean);
+      if (sources.length > 0) return { state: "breached", breaches: sources };
+      return { state: "safe" };
+    } catch {
+      return { state: "error" };
+    }
+  });
+
 export const doListAllUsers = createServerFn({ method: "POST" })
   .inputValidator((d: { adminKey: string }) => d)
   .handler(async ({ data }) => {
