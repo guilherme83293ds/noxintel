@@ -1456,7 +1456,8 @@ async function toolUrlLogins(url: string): Promise<OsintResult> {
        SELECT url, email, senha, telefone, fonte FROM credentials WHERE url LIKE $3
        LIMIT 100000`,
       [`https://${domain}%`, `http://${domain}%`, `${domain}%`],
-      2000
+      2000,
+      [0, 2, 3]
     );
     allRows = botResult.rows || [];
   } catch (e: any) {

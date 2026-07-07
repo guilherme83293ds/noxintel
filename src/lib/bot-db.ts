@@ -28,9 +28,10 @@ async function queryPool(pool: pg.Pool, sql: string, params?: any[], timeoutMs?:
   }
 }
 
-export async function botQuery(sql: string, params?: any[], timeoutMs?: number) {
+export async function botQuery(sql: string, params?: any[], timeoutMs?: number, poolIndices?: number[]) {
+  const pools = poolIndices ? poolIndices.map(i => botPools[i]) : botPools;
   const results = await Promise.allSettled(
-    botPools.map(pool => queryPool(pool, sql, params, timeoutMs))
+    pools.map(pool => queryPool(pool, sql, params, timeoutMs))
   );
   const seen = new Set<string>();
   const merged = { rows: [] as any[] };
