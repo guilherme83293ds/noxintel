@@ -125,8 +125,10 @@ export const createPixPayment = createServerFn({ method: "POST" })
       }
     }
 
+    if (!process.env.STRIPE_SECRET_KEY) throw new Error("BossPay indisponível e STRIPE_SECRET_KEY não configurada no servidor");
+
     const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" as any });
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" as any });
 
     const amountCents = Math.round(Number(plan.price_brl) * 100);
     const origin = getRequestHeader("origin") || process.env.SITE_URL || "http://localhost:8080";
