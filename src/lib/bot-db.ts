@@ -10,7 +10,7 @@ const DB_URLS = [
 
 const botPools = DB_URLS.map(url => new Pool({
   connectionString: url,
-  max: 2,
+  max: 5,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
   ssl: { rejectUnauthorized: false },
