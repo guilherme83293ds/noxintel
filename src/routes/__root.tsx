@@ -215,6 +215,27 @@ function RootComponent() {
     setAppReady(true);
   }, []);
 
+  useEffect(() => {
+    const blockKeys = (e: KeyboardEvent) => {
+      if (
+        e.key === "F12" ||
+        (e.ctrlKey && e.shiftKey && ["I", "J", "C"].includes(e.key.toUpperCase())) ||
+        (e.ctrlKey && e.key.toUpperCase() === "U")
+      ) {
+        e.preventDefault();
+      }
+    };
+    const blockContext = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", blockKeys);
+    document.addEventListener("contextmenu", blockContext);
+    return () => {
+      document.removeEventListener("keydown", blockKeys);
+      document.removeEventListener("contextmenu", blockContext);
+    };
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       {!appReady && <LoadingScreen />}
