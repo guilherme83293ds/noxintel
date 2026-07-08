@@ -632,7 +632,15 @@ function Dashboard() {
                     onChange={e => setQuery(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") runSearch(); }}
                     className="h-[50px] min-w-0 flex-1 border-0 bg-transparent px-3 pr-[7rem] text-sm font-medium text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-0 focus-visible:ring-0 sm:h-[74px] sm:px-5 sm:pr-[12.25rem] sm:text-base"
-                    placeholder={activeTool === "pix" ? "Cole o código Pix (copia e cola)..." : `Digite para buscar em ${tool.label}...`}
+                    placeholder={
+                      activeTool === "pix" 
+                        ? "Cole o código Pix (copia e cola)..." 
+                        : activeTool === "wifi"
+                        ? "Digite o endereço MAC (BSSID) ou o Nome da Rede (SSID)..."
+                        : activeTool === "photolocation"
+                        ? "Digite uma localidade/ponto de referência ou use o link para enviar a foto..."
+                        : `Digite para buscar em ${tool.label}...`
+                    }
                     autoComplete="off"
                   />
 

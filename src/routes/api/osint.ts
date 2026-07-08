@@ -1900,17 +1900,60 @@ async function toolWifi(query: string): Promise<OsintResult> {
       ]
     });
   } else {
-    // SSID Search fallback or manual search options
-    sections.push({
-      title: "Busca por SSID / Nome de Rede",
-      fields: [
-        { label: "SSID", value: q },
-        { label: "Nota", value: "Para obter coordenadas exatas, insira o endereço MAC (BSSID) no formato 00:11:22:33:44:55." }
-      ],
-      links: [
-        { label: "Buscar SSID no WiGLE", url: `https://wigle.net/search?query=true&ssid=${encodeURIComponent(q)}` }
-      ]
-    });
+    // SSID Search (Query WiGLE directly if credentials exist)
+    let ssidFound = false;
+    const wigleName = process.env.WIGLE_API_NAME;
+    const wigleToken = process.env.WIGLE_API_TOKEN;
+    if (wigleName && wigleToken) {
+      try {
+        const auth = Buffer.from(`${wigleName}:${wigleToken}`).toString('base64');
+        const wigleRes = await fetch(`https://api.wigle.net/api/v2/network/search?ssid=${encodeURIComponent(q)}`, {
+          headers: { 'Authorization': `Basic ${auth}` },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (wigleRes.ok) {
+          const wigleData = await wigleRes.json() as any;
+          if (wigleData.success && wigleData.results && wigleData.results.length > 0) {
+            ssidFound = true;
+            // Show up to 10 network matches for the SSID
+            const matches = wigleData.results.slice(0, 10);
+            matches.forEach((net: any, idx: number) => {
+              sections.push({
+                title: `Rede Encontrada #${idx + 1}: ${net.ssid || q}`,
+                fields: [
+                  { label: "BSSID", value: net.netid || "—", mono: true },
+                  { label: "SSID", value: net.ssid || q },
+                  { label: "Criptografia", value: net.encryption || "—" },
+                  { label: "Latitude", value: String(net.trilat || "—"), mono: true },
+                  { label: "Longitude", value: String(net.trilon || "—"), mono: true },
+                  { label: "Fabricante", value: net.manufacturer || "—" },
+                  { label: "Última vez visto", value: net.lasttime || "—" }
+                ],
+                links: [
+                  { label: "Ver no Google Maps", url: `https://www.google.com/maps?q=${net.trilat},${net.trilon}` }
+                ]
+              });
+            });
+            sources.push("WiGLE API (SSID Search)");
+          }
+        }
+      } catch (err) {
+        console.error("WiGLE SSID search error:", err);
+      }
+    }
+
+    if (!ssidFound) {
+      sections.push({
+        title: "Busca por SSID / Nome de Rede",
+        fields: [
+          { label: "SSID", value: q },
+          { label: "Nota", value: "Nenhum resultado retornado no WiGLE em tempo real. Tente buscar externamente." }
+        ],
+        links: [
+          { label: "Buscar SSID no WiGLE", url: `https://wigle.net/search?query=true&ssid=${encodeURIComponent(q)}` }
+        ]
+      });
+    }
   }
 
   if (sections.length === 0) {
