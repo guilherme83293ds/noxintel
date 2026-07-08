@@ -15,9 +15,9 @@ if (PROFILE_DB_URLS.length === 0) {
 function makePool(connectionString: string) {
   return new Pool({
     connectionString,
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
+    max: 3,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 15000,
     keepAlive: true,
     application_name: "noxintel",
     ssl: { rejectUnauthorized: false },

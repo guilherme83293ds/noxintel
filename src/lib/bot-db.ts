@@ -10,9 +10,9 @@ const DB_URLS = [
 
 const botPools = DB_URLS.map(url => new Pool({
   connectionString: url,
-  max: 5,
+  max: 3,
   idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 15000,
   ssl: { rejectUnauthorized: false },
 }));
 
@@ -55,7 +55,7 @@ export const consultaPool = consultaDbUrl
       connectionString: consultaDbUrl,
       max: 2,
       idleTimeoutMillis: 10000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 15000,
       ssl: { rejectUnauthorized: false },
     })
   : null;
