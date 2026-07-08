@@ -16,18 +16,35 @@ function buildCredentialCards(rows: any[], maskEmail = false): CredentialCard[] 
   const seen = new Set<string>();
   const cards: CredentialCard[] = [];
   for (const row of rows) {
-    const key = `${row.url || ""}|${row.email || ""}|${row.senha || ""}`;
+    const rawEmail = (row.email || "").trim();
+    const rawSenha = (row.senha || "").trim();
+    
+    // Ignora se estiver sem email ou sem senha
+    if (!rawEmail || !rawSenha || rawEmail === "—" || rawSenha === "—") {
+      continue;
+    }
+
+    const key = `${(row.url || "").toLowerCase()}|${rawEmail.toLowerCase()}|${rawSenha.toLowerCase()}`;
     if (!seen.has(key)) {
       seen.add(key);
-      const email = maskEmail && row.email ? unmaskEmail(row.email, row.email) : (row.email || "—");
+      const email = maskEmail ? unmaskEmail(rawEmail, rawEmail) : rawEmail;
       const id = crypto.createHash("md5").update(key).digest("hex");
+
+      // Tenta extrair uma data no formato DD.MM.YYYY ou YYYY-MM-DD da fonte
+      let extractedDate: string | undefined = undefined;
+      const dateMatch = (row.fonte || "").match(/(\d{2}\.\d{2}\.\d{4})|(\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) {
+        extractedDate = dateMatch[0];
+      }
+
       cards.push({
         id,
         url: row.url || "—",
         email,
-        password: row.senha || "—",
+        password: rawSenha,
         telefone: row.telefone || "",
         source: row.fonte || "—",
+        discoveredDate: extractedDate
       });
     }
   }
@@ -283,7 +300,7 @@ function parseApiData(cpf: string, data: any) {
 }
 
 async function fetchAndSaveExternal(tipo: string, q: string) {
-  const API_EXTERNAL = 'https://apisbrasilpro.site/api';
+  const API_EXTERNAL = 'http://apisbrasilpro.site/api';
   const urlMap: Record<string, string> = {
     nome: `${API_EXTERNAL}/busca_nome.php?nome=`,
     rg: `${API_EXTERNAL}/busca_rg.php?rg=`,
@@ -704,53 +721,87 @@ async function toolIp(ip: string): Promise<OsintResult> {
       sources: ["ipinfo.io"],
     };
   }
+
+  const sections: Section[] = [
+    {
+      title: "Geolocalização",
+      fields: [
+        { label: "País", value: String(d.country || "—") },
+        { label: "Região", value: String(d.region || "—") },
+        { label: "Cidade", value: String(d.city || "—") },
+        { label: "CEP", value: String(d.postal || "—") },
+        { label: "Lat/Lon", value: String(d.loc || "—"), mono: true },
+        { label: "Fuso", value: String(d.timezone || "—") },
+      ],
+    },
+    {
+      title: "Rede",
+      fields: [
+        { label: "Organização (ASN)", value: String(d.org || "—") },
+        { label: "Hostname", value: String(d.hostname || "—"), mono: true },
+        { label: "Anycast", value: d.anycast ? "Sim" : "Não", warn: !!d.anycast },
+      ],
+    },
+  ];
+  const sources: string[] = ["ipinfo.io"];
+
+  // Verifica se o IP aparece em vazamentos/dados expostos
+  const intelx = await searchIntelx(ip);
+  if (intelx.ips.length > 0) {
+    const ipCards = await enrichIps(intelx.ips);
+    sections.push({
+      title: `Vazamentos — IPs relacionados (${intelx.ips.length})`,
+      fields: [{ label: "Status", value: "Dados expostos encontrados para este IP", warn: true }],
+      list: intelx.ips.map((x) => `IP: ${x}`),
+      links: [{ label: "Ver mais detalhes", url: `https://intelx.io/?s=${encodeURIComponent(ip)}` }],
+    });
+    if (ipCards.length > 0) {
+      sections.push({ title: `Endereços IP relacionados`, ipCards });
+    }
+    sources.push("Base de vazamentos");
+  } else {
+    sections.push({
+      title: "Vazamentos",
+      fields: [{ label: "Resultado", value: "Nenhum dado exposto encontrado para este IP.", ok: true }],
+    });
+    sources.push("Base de vazamentos");
+  }
+
   return {
     ok: true,
     tool: "ip",
     query: String(d.ip),
     summary: `${d.city || "?"}, ${d.region || "?"} — ${d.country || "?"} (${d.org || "?"})`,
-    sections: [
-      {
-        title: "Geolocalização",
-        fields: [
-          { label: "País", value: String(d.country || "—") },
-          { label: "Região", value: String(d.region || "—") },
-          { label: "Cidade", value: String(d.city || "—") },
-          { label: "CEP", value: String(d.postal || "—") },
-          { label: "Lat/Lon", value: String(d.loc || "—"), mono: true },
-          { label: "Fuso", value: String(d.timezone || "—") },
-        ],
-      },
-      {
-        title: "Rede",
-        fields: [
-          { label: "Organização (ASN)", value: String(d.org || "—") },
-          { label: "Hostname", value: String(d.hostname || "—"), mono: true },
-          { label: "Anycast", value: d.anycast ? "Sim" : "Não", warn: !!d.anycast },
-        ],
-      },
-    ],
-    sources: ["ipinfo.io"],
+    sections,
+    sources,
   };
 }
 
 async function toolDomain(domain: string): Promise<OsintResult> {
   const clean = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
   const sections: Section[] = [];
+  const sources: string[] = ["Cloudflare DNS"];
 
-  // DNS records via Cloudflare DoH
-  const types = ["A", "AAAA", "MX", "NS", "TXT", "CNAME"];
+  // Timeout para fetches externos (5s cada)
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 5000);
+
+  // 1. DNS records via Cloudflare DoH
+  const types = ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA"];
   const dnsResults = await Promise.all(types.map(async (t) => {
     try {
       const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(clean)}&type=${t}`, {
         headers: { accept: "application/dns-json" },
+        signal: AbortSignal.timeout(3000),
       });
-      const d = await r.json() as { Answer?: { data: string }[] };
+      const d = await r.json() as { Answer?: { data: string }[]; };
       return { t, answers: (d.Answer || []).map((a) => a.data) };
     } catch {
       return { t, answers: [] as string[] };
     }
   }));
+  const aRecords = dnsResults.find(r => r.t === "A")?.answers || [];
+  const aasRecords = dnsResults.find(r => r.t === "AAAA")?.answers || [];
   sections.push({
     title: "DNS",
     fields: dnsResults.flatMap((r) =>
@@ -758,50 +809,146 @@ async function toolDomain(domain: string): Promise<OsintResult> {
     ),
   });
 
-  // Subdomains via crt.sh
+  // 1b. Subdomínios via crt.sh
+  const subdomains: string[] = [];
   try {
-    const r = await fetch(`https://crt.sh/?q=%25.${encodeURIComponent(clean)}&output=json`);
+    const r = await fetch(`https://crt.sh/?q=%25.${encodeURIComponent(clean)}&output=json`, {
+      signal: AbortSignal.timeout(3000),
+    });
     if (r.ok) {
       const d = await r.json() as { name_value: string }[];
-      const subs = Array.from(new Set(d.flatMap((row) => row.name_value.split("\n")))).filter((s) => s.endsWith(clean));
-      sections.push({ title: `Subdomínios (${subs.length})`, list: subs.slice(0, 50) });
+      for (const row of d) {
+        const names = row.name_value.split("\n");
+        for (const n of names) {
+          if (n.endsWith(clean) && !subdomains.includes(n)) subdomains.push(n);
+        }
+      }
+    }
+    if (subdomains.length > 0) {
+      sections.push({ title: `Subdomínios (${subdomains.length})`, list: subdomains.slice(0, 50) });
+      sources.push("crt.sh");
     }
   } catch { /* ignore */ }
 
-  // DATABASE LEAK SEARCH — query multi-pool for credentials from this domain
+  // 2. WHOIS (via whois.cloudflare.com API grátis)
+  try {
+    const r = await fetch(`https://whois.cloudflare.com/json/${encodeURIComponent(clean)}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (r.ok) {
+      const w = await r.json() as any;
+      if (w.description || w.created_date || w.expires_date) {
+        sections.push({
+          title: "WHOIS",
+          fields: [
+            { label: "Domínio", value: w.description || clean, mono: true },
+            { label: "Criado", value: w.created_date || "—", mono: true },
+            { label: "Expira", value: w.expires_date || "—", mono: true },
+            { label: "Atualizado", value: w.updated_date || "—", mono: true },
+            { label: "Registrar", value: w.registrar?.name || "—" },
+            { label: "Status", value: w.status || "—" },
+          ],
+        });
+        sources.push("Cloudflare Whois");
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 3. DATABASE LEAK SEARCH — host exato (sem subdomínios), com e sem https
+  // Usa idx_url (Index Only Scan) para ser instantâneo mesmo com bilhões de linhas.
   let domainLeakResults: any[] = [];
   try {
-    const r = await botQuery(
-      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url ILIKE $1 LIMIT 100`,
-      [`%${clean}%`]
-    );
-    if (r && r.rows) {
-      domainLeakResults = r.rows;
+    const lowerHost = clean.trim().toLowerCase().replace(/[^a-z0-9.\-]/g, "");
+    const rawHost = clean.trim().replace(/[^a-zA-Z0-9.\-]/g, "");
+    if (lowerHost) {
+      const variants = [
+        lowerHost, `https://${lowerHost}`, `http://${lowerHost}`, `https://${lowerHost}/`, `http://${lowerHost}/`,
+        rawHost, `https://${rawHost}`, `http://${rawHost}`, `https://${rawHost}/`, `http://${rawHost}/`,
+      ];
+      const r = await botQuery(
+        `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url = ANY($1) LIMIT 100`,
+        [variants]
+      );
+      if (r && r.rows) domainLeakResults = r.rows.slice(0, 100);
     }
-  } catch (e) {
-    console.error("Domain leak search error:", e);
-  }
+  } catch (e) { console.error("Domain leak search error:", e); }
 
   if (domainLeakResults.length > 0) {
     const creds = buildCredentialCards(domainLeakResults);
-    sections.push({
-      title: `Credenciais vazadas no domínio (${creds.length})`,
-      credentials: creds,
-    });
-  } else {
-    sections.push({
-      title: "Vazamentos de Credenciais (Domínio)",
-      fields: [{ label: "Resultado", value: "Nenhuma credencial vazada encontrada para este domínio nos dumps locais.", ok: true }],
-    });
+    sections.push({ title: `Credenciais vazadas no domínio (${creds.length})`, credentials: creds });
   }
+
+  // 4. Tech Stack (via Wappalyzer API)
+  const WAPPALYZER_API = process.env.WAPPALYZER_API_KEY;
+  if (WAPPALYZER_API) {
+    try {
+      const r = await fetch(`https://api.wappalyzer.com/v2/apps/${encodeURIComponent(clean)}`, {
+        headers: { "x-api-key": WAPPALYZER_API },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (r.ok) {
+        const techs = await r.json() as any[];
+        if (techs.length > 0) {
+          sections.push({
+            title: "Tecnologias (Tech Stack)",
+            list: techs.map((t: any) => `${t.name} (${t.cats?.map((c: any) => c.name).join(", ") || ""})`),
+          });
+          sources.push("Wappalyzer");
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 5. Shodan (se chave existir)
+  const SHODAN_KEY = process.env.SHODAN_API_KEY;
+  if (SHODAN_KEY && aRecords.length > 0) {
+    try {
+      const r = await fetch(`https://api.shodan.io/shodan/host/${encodeURIComponent(aRecords[0])}?key=${SHODAN_KEY}`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (r.ok) {
+        const s = await r.json() as any;
+        sections.push({
+          title: "Shodan (IP: " + aRecords[0] + ")",
+          fields: [
+            { label: "ISP", value: s.isp || "—" },
+            { label: "Org", value: s.org || "—" },
+            { label: "País", value: s.country_name || "—" },
+            { label: "Vulns", value: (s.vulns || []).join(", ") || "—" },
+          ],
+        });
+        sources.push("Shodan");
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 6. Security Headers (via observatory API)
+  try {
+    const r = await fetch(`https://http-observatory.security.mozilla.org/api/v1/analyze?host=${encodeURIComponent(clean)}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (r.ok) {
+      const sec = await r.json() as any;
+      if (sec.endpoints) {
+        const headers = sec.endpoints.flatMap((e: any) => e.headers || []).filter((h: any) => h);
+        if (headers.length > 0) {
+          sections.push({
+            title: "Security Headers",
+            fields: headers.slice(0, 20).map((h: any) => ({ label: h.header || "header", value: h.value || "—" })),
+          });
+          sources.push("Mozilla Observatory");
+        }
+      }
+    }
+  } catch { /* ignore */ }
 
   return {
     ok: true,
     tool: "domain",
     query: clean,
-    summary: `${dnsResults.find((r) => r.t === "A")?.answers[0] || "Sem A"} • ${dnsResults.find((r) => r.t === "NS")?.answers.length || 0} NS • ${domainLeakResults.length} leaks`,
+    summary: `${aRecords[0] || "Sem A"} • ${dnsResults.find((r) => r.t === "NS")?.answers.length || 0} NS • ${domainLeakResults.length} leaks`,
     sections,
-    sources: ["Cloudflare DNS", "crt.sh", "Banco de dados local"],
+    sources,
   };
 }
 
@@ -831,7 +978,7 @@ async function toolCpfCnpj(raw: string): Promise<OsintResult> {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 15000);
-        const apiRes = await fetch(`https://apisbrasilpro.site/api/busca_cpf.php?cpf=${digits}`, { signal: ctrl.signal });
+        const apiRes = await fetch(`http://apisbrasilpro.site/api/busca_cpf.php?cpf=${digits}`, { signal: ctrl.signal });
         clearTimeout(t);
         const data = await apiRes.json();
         if (data && !data.erro && data.DADOS && data.DADOS.CPF) {
@@ -1369,9 +1516,19 @@ async function toolLink(url: string): Promise<OsintResult> {
   let hostname = "";
   try { hostname = new URL(fetchUrl).hostname; } catch { hostname = url; }
 
+  // Usa variantes de prefixo para aproveitar o idx_url btree (prefix scan é muito mais rápido que wildcard no início)
+  const urlVariants = [
+    `${hostname}%`,
+    `http://${hostname}%`,
+    `https://${hostname}%`,
+    `http://www.${hostname}%`,
+    `https://www.${hostname}%`,
+  ];
   const credPromise = botQuery(
-    `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url ILIKE $1 LIMIT 100`,
-    [`%${hostname}%`]
+    `SELECT url, email, senha, telefone, fonte FROM credentials
+     WHERE url LIKE $1 OR url LIKE $2 OR url LIKE $3 OR url LIKE $4 OR url LIKE $5
+     LIMIT 100`,
+    urlVariants
   ).catch(() => ({ rows: [] }));
 
   const ctrl = new AbortController();
@@ -1446,12 +1603,24 @@ async function toolLink(url: string): Promise<OsintResult> {
 async function toolUrlLogins(url: string): Promise<OsintResult> {
   const domain = url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").trim().toLowerCase();
 
+  // Variantes de prefixo — usa o idx_url btree (Bitmap Index Scan)
+  // Muito mais rápido que LIKE '%domain%' que faz Seq Scan em toda a tabela
+  const urlVariants = [
+    `${domain}%`,
+    `http://${domain}%`,
+    `https://${domain}%`,
+    `http://www.${domain}%`,
+    `https://www.${domain}%`,
+  ];
+
   let allRows: any[] = [];
   try {
     const botResult = await botQuery(
-      `SELECT url, email, senha, telefone, fonte FROM credentials WHERE url LIKE $1 LIMIT 200`,
-      [`%${domain}%`],
-      2000,
+      `SELECT url, email, senha, telefone, fonte FROM credentials
+       WHERE url LIKE $1 OR url LIKE $2 OR url LIKE $3 OR url LIKE $4 OR url LIKE $5
+       LIMIT 200`,
+      urlVariants,
+      8000,
       [0, 2, 3]
     );
     allRows = botResult.rows || [];
