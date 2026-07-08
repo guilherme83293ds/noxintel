@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { noxPool, ensureDb } from './db';
+import { noxPool, profilePools, ensureDb } from './db';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
@@ -37,12 +37,22 @@ export async function createUser(email: string, password: string, fullName?: str
 
 export async function authenticateUser(email: string, password: string) {
   await ensureDb();
-  const { rows } = await noxPool.query(
-    `SELECT id, email, password_hash, full_name FROM profiles WHERE email = $1`,
-    [email.toLowerCase()]
+  const results = await Promise.allSettled(
+    profilePools.map((pool) =>
+      pool.query(
+        `SELECT id, email, password_hash, full_name FROM profiles WHERE lower(email) = lower($1)`,
+        [email]
+      )
+    )
   );
-  if (rows.length === 0) return null;
-  const user = rows[0];
+  let user: any = null;
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value.rows.length > 0) {
+      user = r.value.rows[0];
+      break;
+    }
+  }
+  if (!user) return null;
   const ok = await verifyPassword(password, user.password_hash);
   if (!ok) return null;
   return { id: user.id, email: user.email, full_name: user.full_name };
@@ -50,9 +60,15 @@ export async function authenticateUser(email: string, password: string) {
 
 export async function getUserById(id: string) {
   await ensureDb();
-  const { rows } = await noxPool.query(
-    `SELECT id, email, full_name, created_at FROM profiles WHERE id = $1`,
-    [id]
+  const results = await Promise.allSettled(
+    profilePools.map((pool) =>
+      pool.query(`SELECT id, email, full_name, created_at FROM profiles WHERE id = $1`, [id])
+    )
   );
-  return rows[0] || null;
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value.rows.length > 0) {
+      return r.value.rows[0];
+    }
+  }
+  return null;
 }

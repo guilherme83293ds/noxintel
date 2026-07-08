@@ -2,10 +2,10 @@ import pg from 'pg';
 const { Pool } = pg;
 
 // Admin database pool using Neon PostgreSQL
-const adminDbUrl = process.env.DATABASE_URL_6 || process.env.DATABASE_URL_1;
+const adminDbUrl = process.env.DATABASE_URL_1;
 
 if (!adminDbUrl) {
-  throw new Error('No admin database URL configured (DATABASE_URL_6 or DATABASE_URL_1)');
+  throw new Error('No admin database URL configured (DATABASE_URL_1)');
 }
 
 export const adminPool = new Pool({

@@ -2,11 +2,11 @@ import pg from 'pg';
 const { Pool } = pg;
 
 const DB_URLS = [
-  "postgresql://neondb_owner:npg_2qlr5DCObefd@ep-jolly-mountain-aq5lkd3g-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-  "postgresql://neondb_owner:npg_uwJ97VZOsdxk@ep-muddy-glitter-aqz2uwrd-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-  "postgresql://neondb_owner:npg_McGpuOwI86eC@ep-withered-sound-aidv3w3g-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-  "postgresql://neondb_owner:npg_MAXar3ojY7xf@ep-tiny-band-ad5cksgf-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-];
+  process.env.DATABASE_URL_1,
+  process.env.DATABASE_URL_2,
+  process.env.DATABASE_URL_3,
+  process.env.DATABASE_URL_4,
+].filter((u): u is string => Boolean(u));
 
 const botPools = DB_URLS.map(url => new Pool({
   connectionString: url,
@@ -49,7 +49,7 @@ export async function botQuery(sql: string, params?: any[], timeoutMs?: number, 
   return merged;
 }
 
-const consultaDbUrl = process.env.CONSULTA_DATABASE_URL;
+const consultaDbUrl = process.env.CONSULTA_DATABASE_URL || process.env.DATABASE_URL_1;
 export const consultaPool = consultaDbUrl
   ? new Pool({
       connectionString: consultaDbUrl,

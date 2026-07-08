@@ -277,7 +277,7 @@ export const redeemLicenseKey = createServerFn({ method: "POST" })
       ["license_key_v2:" + data.key.trim()]
     );
     if (!lkRows.length) throw new Error("Chave inválida");
-    const lk = lkRows[0].value;
+    const lk = JSON.parse(lkRows[0].value);
     if (!lk.active) throw new Error("Chave já resgatada ou inativa");
     if (lk.user_id) throw new Error("Chave já resgatada");
 
@@ -367,7 +367,7 @@ export const listLicenseKeys = createServerFn({ method: "POST" })
     const { rows } = await noxPool.query(
       "SELECT value FROM app_settings WHERE key LIKE 'license_key_v2:%' ORDER BY updated_at DESC"
     );
-    return rows.map((r: any) => r.value);
+    return rows.map((r: any) => JSON.parse(r.value));
   });
 
 export const verifyAdminKey = createServerFn({ method: "POST" })

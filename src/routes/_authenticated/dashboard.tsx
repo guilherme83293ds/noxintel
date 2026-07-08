@@ -5,8 +5,8 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Activity, TrendingUp, Shield, Clock, Filter, Download,
   Menu, X, Database, Sparkles, Zap, ArrowUpRight, Globe2,
   AlertTriangle, CheckCircle2, Loader2, Lock, EyeOff,
-  CreditCard, Wallet, Link2, Share2, ShieldAlert, Network, Cloud, MapPin,
-  UserSearch, Fingerprint, ArrowRight, LayoutGrid, Key, Copy,
+  CreditCard, Wallet, Link2, ShieldAlert, Network, Cloud, MapPin,
+  UserSearch, Fingerprint, ArrowRight, LayoutGrid, Key, Copy, QrCode, Wifi, Image,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,8 @@ import { getMyAccount, redeemLicenseKey } from "@/lib/billing.functions";
 import { useEmailBreach } from "@/hooks/useEmailBreach";
 import { usePwnedPassword } from "@/hooks/usePwnedPassword";
 import { useTilt } from "@/hooks/use-tilt";
+import { decodePix } from "@/lib/pix-decoder";
+import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -37,12 +39,12 @@ const TOOLS: { id: string; icon: typeof Mail; label: string; desc: string; sampl
   { id: "domain", icon: Globe2, label: "Domínio", desc: "Whois, DNS, tecnologias utilizadas e subdomínios expostos.", sample: "exemplo.com.br" },
   { id: "ip", icon: Network, label: "IP", desc: "Geolocalização, ISP, reputação e portas abertas do endereço.", sample: "200.150.10.42" },
   { id: "blockchain", icon: Wallet, label: "Blockchain", desc: "Rastreie carteiras de criptomoedas e transações.", sample: "0x742d35Cc6634C0532925a3b8" },
-  { id: "link", icon: Link2, label: "Link / URL", desc: "Análise de links e URLs. Identifique conexões e relações online.", sample: "https://loja-suspeita.shop/promo" },
   { id: "urllogins", icon: Key, label: "URL Logins", desc: "Busque logins e senhas vazados associados a um domínio ou URL.", sample: "loja-suspeita.shop", tag: "CRED" },
-  { id: "social", icon: Share2, label: "Redes sociais", desc: "Cross-reference entre plataformas e análise de conexões.", sample: "@perfil_alvo" },
-  { id: "breach", icon: ShieldAlert, label: "Vazamentos", desc: "Credenciais expostas em vazamentos e dumps conhecidos.", sample: "alvo@exemplo.com" },
+  { id: "wifi", icon: Wifi, label: "Localizar Wi-Fi", desc: "Identifique a geolocalização de redes sem fio via BSSID/SSID nas bases públicas.", sample: "00:11:22:33:44:55" },
+  { id: "photolocation", icon: Image, label: "Ver Localização por Foto", desc: "Identifique coordenadas de fotos usando a inteligência do WhereIsThisPlace.", sample: "Foto ou cidade a localizar" },
   { id: "password", icon: Lock, label: "Senha", desc: "Descubra em quais vazamentos uma senha apareceu.", sample: "" },
   { id: "meta", icon: FileText, label: "Metadados", desc: "Extraia metadados de arquivos (EXIF, autor, GPS).", sample: "documento.pdf" },
+  { id: "pix", icon: QrCode, label: "Decodificador Pix", desc: "Decodifique códigos Pix (copia e cola) e visualize QR Code e dados EMV.", sample: "00020126580014br.gov.bcb.pix0136" },
 ];
 
 
@@ -176,6 +178,7 @@ function Dashboard() {
   type OsintResult = { ok: boolean; tool: string; query: string; summary?: string; sections: Section[]; sources: string[]; error?: string };
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OsintResult | null>(null);
+  const [pixResult, setPixResult] = useState<ReturnType<typeof decodePix> | null>(null);
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({});
   const [showSettings, setShowSettings] = useState(false);
   const [recentSearches, setRecentSearches] = useState<{ query: string; tool: string; date: string }[]>(() => {
@@ -216,8 +219,16 @@ function Dashboard() {
     return () => cancelSearch();
   }, []);
 
+  useEffect(() => {
+    setPixResult(null);
+  }, [activeTool]);
+
   async function runSearch() {
     if (!query.trim() || tool.soon) return;
+    if (activeTool === "pix") {
+      setPixResult(decodePix(query));
+      return;
+    }
     cancelSearch();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -621,7 +632,7 @@ function Dashboard() {
                     onChange={e => setQuery(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") runSearch(); }}
                     className="h-[50px] min-w-0 flex-1 border-0 bg-transparent px-3 pr-[7rem] text-sm font-medium text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-0 focus-visible:ring-0 sm:h-[74px] sm:px-5 sm:pr-[12.25rem] sm:text-base"
-                    placeholder={`Digite para buscar em ${tool.label}...`}
+                    placeholder={activeTool === "pix" ? "Cole o código Pix (copia e cola)..." : `Digite para buscar em ${tool.label}...`}
                     autoComplete="off"
                   />
 
@@ -774,6 +785,143 @@ function Dashboard() {
               </div>
             </form>
           </div>
+
+          {/* Pix decoder panel */}
+          {activeTool === "pix" && (
+            <section className="relative overflow-hidden rounded-2xl border border-[#2a8fc4]/8">
+              <div style={{ boxShadow: "inset 0 0 0 1px rgba(42,143,196,0.06), 0 2px 12px -4px rgba(0,0,0,0.3)" }} className="relative rounded-2xl bg-[#060a14]/80 p-4 sm:p-5">
+                <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent" />
+                <div className="relative flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-white">Decodificador Pix</span>
+                    <span className="rounded-md bg-[#2a8fc4]/8 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[#5ab8e0]/40">EMV / BR Code</span>
+                  </div>
+                  {pixResult && (
+                    <span className={`rounded-md px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${pixResult.ok ? (pixResult.crcValid ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400") : "bg-red-500/15 text-red-400"}`}>
+                      {pixResult.ok ? (pixResult.crcValid ? "CRC válido" : "CRC inválido") : "erro"}
+                    </span>
+                  )}
+                </div>
+
+                {!pixResult && (
+                  <div className="relative mt-3 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#2a8fc4]/10 bg-[#2a8fc4]/3 px-6 py-10 text-center">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2a8fc4]/15 text-[#5ab8e0]">
+                      <QrCode className="h-4 w-4" />
+                    </div>
+                    <p className="text-sm font-medium text-white/70">Nenhum código decodificado</p>
+                    <p className="text-xs text-[#5ab8e0]/40">Cole um código Pix (copia e cola) acima e clique em Buscar.</p>
+                  </div>
+                )}
+
+                {pixResult && !pixResult.ok && (
+                  <div className="relative mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
+                    <p className="flex items-center gap-2 font-semibold">
+                      <AlertTriangle className="h-4 w-4" /> Falha ao decodificar
+                    </p>
+                    <p className="mt-1 text-red-400/80">{pixResult.error}</p>
+                  </div>
+                )}
+
+                {pixResult && pixResult.ok && (
+                  <div className="relative mt-3 grid gap-4 lg:grid-cols-[280px_1fr]">
+                    {/* QR Code */}
+                    <div className="flex flex-col items-center gap-3 rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-4">
+                      <div className="rounded-xl bg-white p-3 shadow-lg">
+                        <QRCodeSVG value={query.trim()} size={200} level="M" />
+                      </div>
+                      <p className="text-[10px] text-[#5ab8e0]/40">QR Code gerado a partir do código informado</p>
+                    </div>
+
+                    {/* Info + structure */}
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5">
+                        <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Informações do Pix</p>
+                        <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {pixResult.info.tipo !== "Desconhecido" && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Tipo</dt>
+                              <dd className="mt-0.5 text-sm text-white/80">{pixResult.info.tipo}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.chavePix && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Chave Pix</dt>
+                              <dd className="mt-0.5 break-all font-mono text-sm text-white/80">{pixResult.info.chavePix}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.nome && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Nome do recebedor</dt>
+                              <dd className="mt-0.5 break-all text-sm text-white/80">{pixResult.info.nome}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.cidade && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Cidade</dt>
+                              <dd className="mt-0.5 text-sm text-white/80">{pixResult.info.cidade}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.valor && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Valor</dt>
+                              <dd className="mt-0.5 text-sm text-emerald-400">{pixResult.info.valor}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.moeda && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Moeda</dt>
+                              <dd className="mt-0.5 text-sm text-white/80">{pixResult.info.moeda}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.descricao && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Descrição / txid</dt>
+                              <dd className="mt-0.5 break-all text-sm text-white/80">{pixResult.info.descricao}</dd>
+                            </div>
+                          )}
+                          {pixResult.info.url && (
+                            <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">URL</dt>
+                              <dd className="mt-0.5 break-all font-mono text-sm text-white/80">{pixResult.info.url}</dd>
+                            </div>
+                          )}
+                        </dl>
+                      </div>
+
+                      {/* Estrutura decodificada */}
+                      <div className="rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5">
+                        <p className="mb-3 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Estrutura decodificada (EMV)</p>
+                        <div className="space-y-1.5">
+                          {pixResult.fields.map((f, i) => (
+                            <div key={i} className="rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className="rounded bg-[#0a0a0f]/80 px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#5ab8e0]/70">{f.id}</span>
+                                <span className="text-[11px] font-medium text-white/70">{f.label}</span>
+                              </div>
+                              <p className="mt-1 break-all font-mono text-xs text-white/80">{f.value}</p>
+                              {f.subfields && f.subfields.length > 0 && (
+                                <div className="mt-2 space-y-1 border-l border-[#2a8fc4]/15 pl-3">
+                                  {f.subfields.map((s, j) => (
+                                    <div key={j}>
+                                      <div className="flex items-center gap-2">
+                                        <span className="rounded bg-[#0a0a0f]/80 px-1.5 py-0.5 font-mono text-[8px] font-bold text-[#5ab8e0]/50">{s.id}</span>
+                                        <span className="text-[10px] text-white/50">{s.label}</span>
+                                      </div>
+                                      <p className="mt-0.5 break-all font-mono text-[11px] text-white/70">{s.value}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           {/* Recent searches */}
           {recentSearches.length > 0 && !result && (
@@ -1153,90 +1301,129 @@ function Dashboard() {
                                         ))}
                                       </div>
                                     )}
-                                    <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-3 lg:grid-cols-3">
+                                    <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                                       {pageItems.map((cred, j) => {
-                                        const hostname = (() => { try { return new URL(cred.url).hostname; } catch { return cred.url; } })();
                                         const rootDomain = rootHost(cred.url);
-                                        return (
-                                          <div key={j} className="group relative overflow-hidden rounded-xl border border-[#2a8fc4]/10 text-white transition-all duration-300 hover:border-[#2a8fc4]/20"
-                                            style={{background: "rgba(10,15,24,0.9)", boxShadow: "0 4px 20px -4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(42,143,196,0.06)"}}
-                                          >
-                                             {j >= visibleLimit && (
-                                               <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 backdrop-blur-sm">
-                                                 <span className="text-[10px] font-medium text-white/60">Desbloqueie com</span>
-                                                  <a href="/planos" className="inline-flex items-center justify-center rounded-full px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white transition-all duration-200 active:scale-95"
-                                                    style={{background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 6px 0 rgba(42,143,196,0.3), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset, 0 0 24px -4px rgba(42,143,196,0.4)"}}
-                                                 >COMPRAR PLANO</a>
-                                               </div>
-                                             )}
-                                            <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-                                              <div className="relative flex flex-wrap items-center gap-1 border-b border-[#2a8fc4]/10 px-2.5 py-2 sm:gap-2 sm:px-4 sm:py-2.5">
-                                                <span className="rounded bg-[#0a0a0f]/80 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white/90 backdrop-blur-xl sm:px-2 sm:text-[10px]">STEALER LOG</span>
-                                              <img src={`https://www.google.com/s2/favicons?domain=${rootDomain}&sz=16`} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
-                                              <div className="ml-auto flex items-center gap-1.5">
-                                                <span className="font-mono text-[10px] text-white/60">#{cred.id.slice(0, 8)}</span>
-                                                 <button onClick={() => navigator.clipboard.writeText(cred.id)} className="hidden rounded p-1 text-white/60 transition hover:text-white sm:block" title="Copy ID">
-                                                  <Copy className="h-3 w-3" />
-                                                </button>
+                                           return (
+                                           <div key={j} className="group relative overflow-hidden rounded-xl border border-[#2a8fc4]/15 bg-gradient-to-b from-[#0a0f18]/95 to-[#0b0c16]/90 p-4 transition-all duration-300 hover:border-[#2a8fc4]/30 hover:shadow-[0_8px_30px_rgb(42,143,196,0.1)] hover:-translate-y-[1px] text-white">
+                                              {j >= visibleLimit && (
+                                                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/90 backdrop-blur-sm">
+                                                  <span className="text-[10px] font-medium text-white/60">Desbloqueie com</span>
+                                                   <a href="/planos" className="inline-flex items-center justify-center rounded-full px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white transition-all duration-200 active:scale-95"
+                                                     style={{background: "linear-gradient(180deg, #2a8fc4 49.18%, #5ab8e0 113.93%)", boxShadow: "0 0 6px 0 rgba(42,143,196,0.3), 0 -2px 0 0 rgba(0,0,0,0.20) inset, 0 1px 0 0 rgba(255,255,255,0.40) inset, 0 0 24px -4px rgba(42,143,196,0.4)"}}
+                                                   >COMPRAR PLANO</a>
+                                                </div>
+                                              )}
+                                              <span aria-hidden className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-[#2a8fc4]/10 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
+                                              
+                                              {/* Top Bar Header */}
+                                              <div className="flex items-center justify-between pb-3 border-b border-[#2a8fc4]/10">
+                                                <div className="flex items-center gap-2">
+                                                  <span className="rounded bg-[#2a8fc4]/10 border border-[#2a8fc4]/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#5ab8e0] backdrop-blur-xl">
+                                                    STEALER LOG
+                                                  </span>
+                                                  <img src={`https://www.google.com/s2/favicons?domain=${rootDomain}&sz=16`} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  <span className="font-mono text-[9px] text-white/40">#{cred.id.slice(0, 8)}</span>
+                                                  <button onClick={() => {
+                                                    navigator.clipboard.writeText(cred.id);
+                                                    const alertDiv = document.createElement('div');
+                                                    alertDiv.className = 'fixed bottom-4 right-4 z-50 rounded-lg bg-[#0a0f18] border border-[#2a8fc4]/30 text-[#5ab8e0] px-4 py-2 text-xs font-mono shadow-lg transition-all duration-300 animate-in fade-in slide-in-from-bottom-2';
+                                                    alertDiv.innerText = 'ID copiado!';
+                                                    document.body.appendChild(alertDiv);
+                                                    setTimeout(() => alertDiv.remove(), 2000);
+                                                  }} className="rounded p-1 text-white/40 transition hover:text-white/80 hover:bg-white/5" title="Copy ID">
+                                                    <Copy className="h-3 w-3" />
+                                                  </button>
+                                                </div>
                                               </div>
-                                            </div>
-                                            {cred.stolenDate || cred.discoveredDate ? (
-<div className="relative hidden flex-wrap gap-1.5 px-2 py-1 sm:flex sm:gap-2 sm:px-4 sm:py-2">
+
+                                              {/* Date Meta Row (TOP) */}
+                                              {cred.stolenDate || cred.discoveredDate ? (
+                                                <div className="flex flex-wrap gap-1.5 pt-2 px-0.5">
                                                   {cred.stolenDate && (
-                                                    <span className="inline-flex items-center gap-1 rounded-full border border-[#2a8fc4]/15 px-2.5 py-0.5 text-[10px] text-white/70">
-                                                      <Clock className="h-3 w-3" /> Stolen {cred.stolenDate}
+                                                    <span className="inline-flex items-center gap-1 rounded bg-[#2a8fc4]/5 border border-[#2a8fc4]/10 px-2 py-0.5 text-[9px] font-medium text-[#5ab8e0]">
+                                                      <Clock className="h-2.5 w-2.5" /> Vazado: {cred.stolenDate}
                                                     </span>
                                                   )}
                                                   {cred.discoveredDate && (
-                                                    <span className="inline-flex items-center gap-1 rounded-full border border-[#2a8fc4]/15 px-2.5 py-0.5 text-[10px] text-white/70">
-                                                      <Shield className="h-3 w-3" /> Discovered {cred.discoveredDate}
+                                                    <span className="inline-flex items-center gap-1 rounded bg-[#2a8fc4]/5 border border-[#2a8fc4]/10 px-2 py-0.5 text-[9px] font-medium text-[#5ab8e0]">
+                                                      <Shield className="h-2.5 w-2.5" /> Descoberto: {cred.discoveredDate}
                                                     </span>
                                                   )}
-                                               </div>
-                                            ) : null}
-                                             <div className="relative flex items-center gap-1.5 px-2.5 py-1 normal-case sm:gap-2 sm:px-4 sm:py-1.5">
-                                               <ArrowUpRight className="hidden sm:block h-3 w-3 shrink-0 text-white/70" />
-                                              <a href={cred.url} target="_blank" rel="noopener noreferrer" className="truncate font-mono text-xs text-white/90 underline underline-offset-2 decoration-white/30 hover:decoration-white/60">{cred.url}</a>
-                                            </div>
-                                             <div className="relative flex flex-col gap-0.5 px-2 pb-2 pt-1 sm:grid sm:grid-cols-3 sm:gap-2 sm:px-4 sm:pb-3">
-                                                <div className="flex cursor-pointer items-center gap-1.5 rounded-md bg-[#0a0a0f]/60 px-2 py-1.5 sm:hidden" onClick={() => navigator.clipboard.writeText(cred.email)}>
-                                                  <User className="h-3.5 w-3.5 shrink-0 text-white/60" />
-                                                  <span className="truncate font-mono text-[10px] text-white/90">{cred.email}</span>
                                                 </div>
-                                                <div className="flex cursor-pointer items-center gap-1.5 rounded-md bg-[#0a0a0f]/60 px-2 py-1.5 sm:hidden" onClick={() => navigator.clipboard.writeText(cred.password)}>
-                                                  <Key className="h-3.5 w-3.5 shrink-0 text-white/60" />
-                                                  <span className="truncate font-mono text-[10px] text-white/90">{cred.password}</span>
-                                                </div>
-  <div className="hidden rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/80 p-1 backdrop-blur-xl sm:flex sm:flex-col sm:p-2.5">
-                                                    <span className="text-[9px] tracking-wider text-white/60 sm:flex sm:items-center sm:gap-1.5 sm:text-[10px] sm:normal-case">
-                                                      <User className="hidden sm:inline h-3 w-3" /> <span className="sm:inline">email</span>
-                                                   </span>
-                                                      <span className="truncate font-mono text-[9px] text-white/90 sm:break-all sm:text-xs">{cred.email}</span>
-                                                     <button onClick={() => navigator.clipboard.writeText(cred.email)} className="hidden shrink-0 rounded p-1 text-white/60 transition hover:text-white sm:flex" title="Copy">
-                                                       <Copy className="h-3 w-3" />
-                                                     </button>
-  </div>
-  <div className="hidden rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/80 p-1 backdrop-blur-xl sm:flex sm:flex-col sm:p-2.5">
-                                                    <span className="text-[9px] tracking-wider text-white/60 sm:flex sm:items-center sm:gap-1.5 sm:text-[10px] sm:normal-case">
-                                                      <Key className="hidden sm:inline h-3 w-3" /> <span className="sm:inline">pass</span>
-                                                   </span>
-                                                      <span className="truncate font-mono text-[9px] text-white/90 sm:break-all sm:text-xs">{cred.password}</span>
-                                                      <button onClick={() => navigator.clipboard.writeText(cred.password)} className="hidden shrink-0 rounded p-1 text-white/60 transition hover:text-white sm:flex" title="Copy">
-                                                       <Copy className="h-3 w-3" />
-                                                     </button>
-  </div>
-  <div className="hidden rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/80 p-1 backdrop-blur-xl sm:flex sm:flex-col sm:p-2.5">
-                                                   <span className="text-[9px] tracking-wider text-white/60 sm:flex sm:items-center sm:gap-1.5 sm:text-[10px] sm:normal-case">
-                                                     <Globe2 className="hidden sm:inline h-3 w-3" /> <span className="sm:inline">{cred.telefone ? "tel" : "sub"}</span>
+                                              ) : null}
+
+                                              {/* Hostname Link */}
+                                              <div className="flex items-center gap-1.5 py-3 px-0.5">
+                                                <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-white/50 group-hover:text-[#5ab8e0] transition-colors" />
+                                                <a href={cred.url} target="_blank" rel="noopener noreferrer" className="truncate font-mono text-xs text-white/85 hover:text-white transition-colors underline underline-offset-4 decoration-white/20 hover:decoration-[#5ab8e0]">
+                                                  {cred.url}
+                                                </a>
+                                              </div>
+
+                                              {/* Credential Blocks */}
+                                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                                {/* Email Block */}
+                                                <div 
+                                                  onClick={() => {
+                                                    navigator.clipboard.writeText(cred.email);
+                                                    const toast = document.createElement('div');
+                                                    toast.className = 'fixed bottom-4 right-4 z-50 rounded-lg bg-[#0a0f18] border border-[#2a8fc4]/30 text-[#5ab8e0] px-4 py-2 text-xs font-mono shadow-lg transition-all duration-300 animate-in fade-in slide-in-from-bottom-2';
+                                                    toast.innerText = 'E-mail copiado!';
+                                                    document.body.appendChild(toast);
+                                                    setTimeout(() => toast.remove(), 2000);
+                                                  }}
+                                                  className="relative flex flex-col gap-1 rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/40 p-2.5 cursor-pointer select-none transition-all hover:bg-[#2a8fc4]/5 hover:border-[#2a8fc4]/25 hover:shadow-[0_0_12px_rgba(42,143,196,0.05)] active:scale-[0.98]"
+                                                >
+                                                  <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-[#5ab8e0]/60 font-semibold">
+                                                    <User className="h-2.5 w-2.5" /> Usuário / Email
                                                   </span>
-                                                     <span className="truncate font-mono text-[9px] text-white/90 sm:break-all sm:text-xs">{cred.telefone || hostname}</span>
-                                                     <button onClick={() => navigator.clipboard.writeText(cred.telefone || hostname)} className="hidden shrink-0 rounded p-1 text-white/60 transition hover:text-white sm:flex" title="Copy">
-                                                      <Copy className="h-3 w-3" />
-                                                    </button>
- </div>
-                                             </div>
-                                          </div>
-                                        );
+                                                  <span className="truncate font-mono text-xs text-white/90 break-all pr-5">{cred.email}</span>
+                                                  <span className="absolute bottom-2 right-2 text-white/20 group-hover:text-white/40"><Copy className="h-2.5 w-2.5" /></span>
+                                                </div>
+
+                                                {/* Password Block */}
+                                                <div 
+                                                  onClick={() => {
+                                                    navigator.clipboard.writeText(cred.password);
+                                                    const toast = document.createElement('div');
+                                                    toast.className = 'fixed bottom-4 right-4 z-50 rounded-lg bg-[#0a0f18] border border-[#2a8fc4]/30 text-[#5ab8e0] px-4 py-2 text-xs font-mono shadow-lg transition-all duration-300 animate-in fade-in slide-in-from-bottom-2';
+                                                    toast.innerText = 'Senha copiada!';
+                                                    document.body.appendChild(toast);
+                                                    setTimeout(() => toast.remove(), 2000);
+                                                  }}
+                                                  className="relative flex flex-col gap-1 rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/40 p-2.5 cursor-pointer select-none transition-all hover:bg-[#2a8fc4]/5 hover:border-[#2a8fc4]/25 hover:shadow-[0_0_12px_rgba(42,143,196,0.05)] active:scale-[0.98]"
+                                                >
+                                                  <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-[#5ab8e0]/60 font-semibold">
+                                                    <Key className="h-2.5 w-2.5" /> Senha
+                                                  </span>
+                                                  <span className="truncate font-mono text-xs text-white/90 break-all pr-5">{cred.password}</span>
+                                                  <span className="absolute bottom-2 right-2 text-white/20 group-hover:text-white/40"><Copy className="h-2.5 w-2.5" /></span>
+                                                </div>
+
+                                                {/* Details / Target Block */}
+                                                <div className="relative flex flex-col gap-1 rounded-lg border border-[#2a8fc4]/10 bg-[#0a0a0f]/20 p-2.5">
+                                                  <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-[#5ab8e0]/40 font-semibold">
+                                                    <Globe2 className="h-2.5 w-2.5" /> {cred.telefone ? "Telefone" : "Alvo"}
+                                                  </span>
+                                                  <span className="truncate font-mono text-xs text-white/80 pr-5">{cred.telefone || rootHost(cred.url)}</span>
+                                                  <button onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    navigator.clipboard.writeText(cred.telefone || rootHost(cred.url));
+                                                    const toast = document.createElement('div');
+                                                    toast.className = 'fixed bottom-4 right-4 z-50 rounded-lg bg-[#0a0f18] border border-[#2a8fc4]/30 text-[#5ab8e0] px-4 py-2 text-xs font-mono shadow-lg transition-all duration-300 animate-in fade-in slide-in-from-bottom-2';
+                                                    toast.innerText = 'Copiado!';
+                                                    document.body.appendChild(toast);
+                                                    setTimeout(() => toast.remove(), 2000);
+                                                  }} className="absolute bottom-2.5 right-2.5 text-white/30 hover:text-white transition-colors" title="Copy">
+                                                    <Copy className="h-2.5 w-2.5" />
+                                                  </button>
+                                                </div>
+                                              </div>
+                                           </div>
+                                         );
                                       })}
                                     </div>
                                       {total > credPageSize && (

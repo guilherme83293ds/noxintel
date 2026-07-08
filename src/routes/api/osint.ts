@@ -452,7 +452,7 @@ async function toolEmail(email: string): Promise<OsintResult> {
       fields: [{ label: "Resultado", value: "Nenhuma credencial vazada encontrada para este e-mail nos dumps locais.", ok: true }],
     });
   }
-  sources.push("Banco de dados local");
+  sources.push("Banco de dados local (Logoutify/BreachDirectory)");
 
   // Phones from leak results
   const phones = emailLeakResults
@@ -613,6 +613,25 @@ async function toolEmail(email: string): Promise<OsintResult> {
         });
       }
     }
+    // Facha API Integration
+    try {
+      const fachaRes = await fetch(`https://api.facha.dev/v1/temporary-email/${encodeURIComponent(domain)}`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (fachaRes.ok) {
+        const fachaData = await fachaRes.json() as { isTemporary?: boolean; domain?: string };
+        sections.push({
+          title: "Facha API — Temp Email Check",
+          fields: [
+            { label: "Domínio", value: fachaData.domain || domain, mono: true },
+            { label: "E-mail temporário?", value: fachaData.isTemporary ? "Sim" : "Não", warn: fachaData.isTemporary, ok: !fachaData.isTemporary }
+          ]
+        });
+        sources.push("Facha API (api.facha.dev)");
+      }
+    } catch (err) {
+      console.error("Facha API error:", err);
+    }
   })();
 
   return {
@@ -651,7 +670,7 @@ async function toolPassword(password: string): Promise<OsintResult> {
     "Fraca";
 
   const sections: Section[] = [];
-  const sources: string[] = ["HIBP Pwned Passwords", "Banco de dados local"];
+  const sources: string[] = ["HIBP Pwned Passwords", "Banco de dados local (Logoutify/BreachDirectory)"];
 
   sections.push({
     title: "Força & Reputação (HIBP)",
@@ -1460,7 +1479,7 @@ async function toolUsername(username: string): Promise<OsintResult> {
   const hits = checks.filter((c) => c.found);
 
   const sections: Section[] = [];
-  const sources: string[] = [`Verificação direta em ${checks.length} plataformas`, "Banco de dados local"];
+  const sources: string[] = [`Verificação direta em ${checks.length} plataformas`, "Banco de dados local (Logoutify/BreachDirectory)"];
 
   if (leakResults.length > 0) {
     const creds = buildCredentialCards(leakResults);
@@ -1790,6 +1809,130 @@ async function toolSocial(handle: string): Promise<OsintResult> {
   };
 }
 
+async function toolWifi(query: string): Promise<OsintResult> {
+  const q = query.trim();
+  const sections: Section[] = [];
+  const sources: string[] = [];
+
+  // Check if query is a BSSID (MAC Address)
+  const isBssid = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(q) || /^[0-9A-Fa-f]{12}$/.test(q);
+
+  if (isBssid) {
+    const formattedBssid = q.includes(":") || q.includes("-") 
+      ? q.replace(/-/g, ":").toUpperCase() 
+      : q.replace(/(.{2})/g, "$1:").slice(0, -1).toUpperCase();
+
+    // 1. Mylnikov API
+    try {
+      const mylnikovRes = await fetch(`https://api.mylnikov.org/geolocation/wifi?v=1.1&data=open&bssid=${encodeURIComponent(formattedBssid)}`, {
+        signal: AbortSignal.timeout(6000)
+      });
+      if (mylnikovRes.ok) {
+        const mylnikovData = await mylnikovRes.json() as any;
+        if (mylnikovData.desc === "OK" && mylnikovData.data) {
+          sections.push({
+            title: "Mylnikov Geo-Location",
+            fields: [
+              { label: "BSSID", value: formattedBssid, mono: true },
+              { label: "Latitude", value: String(mylnikovData.data.lat), mono: true },
+              { label: "Longitude", value: String(mylnikovData.data.lon), mono: true },
+              { label: "Precisão", value: `${mylnikovData.data.range}m`, mono: true }
+            ],
+            links: [
+              { label: "Ver no Google Maps", url: `https://www.google.com/maps?q=${mylnikovData.data.lat},${mylnikovData.data.lon}` }
+            ]
+          });
+          sources.push("Mylnikov API (api.mylnikov.org)");
+        }
+      }
+    } catch (err) {
+      console.error("Mylnikov API error:", err);
+    }
+
+    // 2. WiGLE API (Using environment credentials if available, otherwise adding search options)
+    const wigleName = process.env.WIGLE_API_NAME;
+    const wigleToken = process.env.WIGLE_API_TOKEN;
+    if (wigleName && wigleToken) {
+      try {
+        const auth = Buffer.from(`${wigleName}:${wigleToken}`).toString('base64');
+        const wigleRes = await fetch(`https://api.wigle.net/api/v2/network/search?netid=${encodeURIComponent(formattedBssid)}`, {
+          headers: { 'Authorization': `Basic ${auth}` },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (wigleRes.ok) {
+          const wigleData = await wigleRes.json() as any;
+          if (wigleData.success && wigleData.results && wigleData.results.length > 0) {
+            const net = wigleData.results[0];
+            sections.push({
+              title: `WiGLE Network: ${net.ssid || "Sem SSID"}`,
+              fields: [
+                { label: "BSSID", value: net.netid || formattedBssid, mono: true },
+                { label: "SSID", value: net.ssid || "—" },
+                { label: "Canal", value: String(net.channel || "—") },
+                { label: "Criptografia", value: net.encryption || "—" },
+                { label: "Fabricante", value: net.manufacturer || "—" },
+                { label: "Latitude", value: String(net.trilat || "—"), mono: true },
+                { label: "Longitude", value: String(net.trilon || "—"), mono: true },
+                { label: "Primeira vez visto", value: net.firsttime || "—" },
+                { label: "Última vez visto", value: net.lasttime || "—" }
+              ],
+              links: [
+                { label: "Ver no Google Maps", url: `https://www.google.com/maps?q=${net.trilat},${net.trilon}` }
+              ]
+            });
+            sources.push("WiGLE API (api.wigle.net)");
+          }
+        }
+      } catch (err) {
+        console.error("WiGLE API error:", err);
+      }
+    }
+
+    // Fallback options
+    sections.push({
+      title: "Pesquisa Externa de BSSID",
+      fields: [
+        { label: "BSSID", value: formattedBssid, mono: true }
+      ],
+      links: [
+        { label: "Pesquisar no WiGLE", url: `https://wigle.net/search?query=true&netid=${encodeURIComponent(formattedBssid)}` },
+        { label: "Pesquisar Fabricante OUI", url: `https://macvendors.com/?query=${encodeURIComponent(formattedBssid)}` }
+      ]
+    });
+  } else {
+    // SSID Search fallback or manual search options
+    sections.push({
+      title: "Busca por SSID / Nome de Rede",
+      fields: [
+        { label: "SSID", value: q },
+        { label: "Nota", value: "Para obter coordenadas exatas, insira o endereço MAC (BSSID) no formato 00:11:22:33:44:55." }
+      ],
+      links: [
+        { label: "Buscar SSID no WiGLE", url: `https://wigle.net/search?query=true&ssid=${encodeURIComponent(q)}` }
+      ]
+    });
+  }
+
+  if (sections.length === 0) {
+    sections.push({
+      title: "Resultado da Localização",
+      fields: [
+        { label: "BSSID/SSID", value: q, mono: true },
+        { label: "Status", value: "Nenhuma coordenada geográfica foi encontrada para esta rede nas bases gratuitas.", warn: true }
+      ]
+    });
+  }
+
+  return {
+    ok: true,
+    tool: "wifi",
+    query: q,
+    summary: sections.length > 1 ? `Localização Wi-Fi resolvida via bases públicas` : `Busca de Wi-Fi para: ${q}`,
+    sections,
+    sources: [...sources, "Bases públicas gratuitas"]
+  };
+}
+
 async function toolName(name: string): Promise<OsintResult> {
   const q = encodeURIComponent(`"${name}"`);
   
@@ -1979,6 +2122,32 @@ function toolMeta(file: string): Promise<OsintResult> {
   });
 }
 
+async function toolPhotoLocation(query: string): Promise<OsintResult> {
+  const q = query.trim();
+  const sections: Section[] = [];
+  
+  sections.push({
+    title: "AI Photo Locator — Análise por Foto",
+    fields: [
+      { label: "Foto / Localidade", value: q },
+      { label: "Status", value: "A extração automatizada de coordenadas requer upload direto da imagem." }
+    ],
+    links: [
+      { label: "Localizar no Where Is This Place", url: `https://whereisthisplace.net` },
+      { label: "Buscar imagem no Google Lens", url: `https://lens.google.com/search?p=${encodeURIComponent(q)}` }
+    ]
+  });
+
+  return {
+    ok: true,
+    tool: "photolocation",
+    query: q,
+    summary: `Localização Inteligente por Foto para: ${q}`,
+    sections,
+    sources: ["WhereIsThisPlace.net"]
+  };
+}
+
 // ---------- route ----------
 export const Route = createFileRoute("/api/osint")({
   server: {
@@ -2048,6 +2217,8 @@ export const Route = createFileRoute("/api/osint")({
             case "blockchain": r = await toolBlockchain(query); break;
             case "social": r = await toolSocial(query); break;
             case "name": r = await toolName(query); break;
+            case "wifi": r = await toolWifi(query); break;
+            case "photolocation": r = await toolPhotoLocation(query); break;
             case "meta": r = await toolMeta(query); break;
             default:
               return json({ ok: false, tool, query, error: "Ferramenta desconhecida.", sections: [], sources: [] }, 400);
