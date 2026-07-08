@@ -17,6 +17,7 @@ import { usePwnedPassword } from "@/hooks/usePwnedPassword";
 import { useTilt } from "@/hooks/use-tilt";
 import { decodePix } from "@/lib/pix-decoder";
 import { QRCodeSVG } from "qrcode.react";
+import * as exifr from "exifr";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -178,6 +179,9 @@ function Dashboard() {
   type OsintResult = { ok: boolean; tool: string; query: string; summary?: string; sections: Section[]; sources: string[]; error?: string };
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OsintResult | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoExif, setPhotoExif] = useState<any>(null);
   const [pixResult, setPixResult] = useState<ReturnType<typeof decodePix> | null>(null);
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({});
   const [showSettings, setShowSettings] = useState(false);
@@ -221,6 +225,9 @@ function Dashboard() {
 
   useEffect(() => {
     setPixResult(null);
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setPhotoExif(null);
   }, [activeTool]);
 
   async function runSearch() {
@@ -638,7 +645,7 @@ function Dashboard() {
                         : activeTool === "wifi"
                         ? "Digite o endereço MAC (BSSID) ou o Nome da Rede (SSID)..."
                         : activeTool === "photolocation"
-                        ? "Digite uma localidade/ponto de referência ou use o link para enviar a foto..."
+                        ? "Digite uma localidade/ponto de referência ou faça upload da foto abaixo..."
                         : `Digite para buscar em ${tool.label}...`
                     }
                     autoComplete="off"
@@ -793,6 +800,160 @@ function Dashboard() {
               </div>
             </form>
           </div>
+
+          {/* Photo upload area */}
+          {activeTool === "photolocation" && (
+            <section className="relative overflow-hidden rounded-2xl border border-[#2a8fc4]/8">
+              <div style={{ boxShadow: "inset 0 0 0 1px rgba(42,143,196,0.06), 0 2px 12px -4px rgba(0,0,0,0.3)" }} className="relative rounded-2xl bg-[#060a14]/80 p-4 sm:p-5">
+                <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[#2a8fc4]/5 to-transparent" />
+                <div className="relative flex flex-wrap items-center justify-between gap-2 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Image className="h-4 w-4 text-[#5ab8e0]" />
+                    <span className="text-sm font-medium text-white">Upload de Foto</span>
+                    <span className="rounded-md bg-[#2a8fc4]/8 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[#5ab8e0]/40">EXIF / GPS</span>
+                  </div>
+                </div>
+
+                {!photoPreview ? (
+                  <label className="relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[#2a8fc4]/15 bg-[#2a8fc4]/3 px-6 py-10 text-center cursor-pointer transition hover:border-[#2a8fc4]/30 hover:bg-[#2a8fc4]/5">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#2a8fc4]/15 text-[#5ab8e0]">
+                      <Image className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white/70">Clique para selecionar uma foto</p>
+                      <p className="mt-1 text-xs text-[#5ab8e0]/40">JPG, PNG, HEIC — até 20MB</p>
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setPhotoFile(file);
+                        setPhotoExif(null);
+                        setResult(null);
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setPhotoPreview(ev.target?.result as string);
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+                    <div className="relative w-full max-w-xs shrink-0 overflow-hidden rounded-xl border border-[#2a8fc4]/10">
+                      <img src={photoPreview} alt="Upload" className="h-auto w-full object-cover" />
+                      <button
+                        onClick={() => { setPhotoFile(null); setPhotoPreview(null); setPhotoExif(null); }}
+                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/70 transition hover:bg-black/80 hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!photoFile) return;
+                          setPhotoExif(null);
+                          try {
+                            const gps = await exifr.gps(photoFile);
+                            if (gps) {
+                              setPhotoExif(gps);
+                            } else {
+                              // Try full parse
+                              const all = await exifr.parse(photoFile, true);
+                              setPhotoExif(all || { error: "Nenhum dado GPS encontrado" });
+                            }
+                          } catch (e) {
+                            setPhotoExif({ error: "Falha ao extrair metadados: " + (e instanceof Error ? e.message : "Erro desconhecido") });
+                          }
+                        }}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#2a8fc4]/10 h-9 px-4 text-xs font-medium text-white/60 transition hover:text-white/80 hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/5"
+                      >
+                        <Search className="h-3.5 w-3.5" /> Extrair Localização
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {photoExif && (
+                  <div className="mt-4 rounded-xl border border-[#2a8fc4]/8 bg-[#2a8fc4]/3 p-3.5">
+                    <p className="mb-3 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#5ab8e0]/40">Dados Extraídos</p>
+                    {photoExif.error ? (
+                      <p className="text-sm text-red-400">{photoExif.error}</p>
+                    ) : (
+                      <>
+                        {photoExif.latitude !== undefined && photoExif.longitude !== undefined ? (
+                          <div className="space-y-2">
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                                <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Latitude</dt>
+                                <dd className="mt-0.5 font-mono text-sm text-white/80">{photoExif.latitude.toFixed(6)}</dd>
+                              </div>
+                              <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                                <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Longitude</dt>
+                                <dd className="mt-0.5 font-mono text-sm text-white/80">{photoExif.longitude.toFixed(6)}</dd>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <a
+                                href={`https://www.google.com/maps?q=${photoExif.latitude},${photoExif.longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2a8fc4]/10 h-8 px-3 text-[10px] font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/5"
+                              >
+                                <MapPin className="h-3 w-3" /> Ver no Google Maps
+                              </a>
+                              <a
+                                href={`https://maps.google.com/maps?q=${photoExif.latitude},${photoExif.longitude}&z=15`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2a8fc4]/10 h-8 px-3 text-[10px] font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/5"
+                              >
+                                <MapPin className="h-3 w-3" /> Google Maps (zoom)
+                              </a>
+                              <a
+                                href={`https://www.openstreetmap.org/?mlat=${photoExif.latitude}&mlon=${photoExif.longitude}&zoom=15`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2a8fc4]/10 h-8 px-3 text-[10px] font-medium text-white/40 transition-all duration-300 hover:text-white/70 hover:border-[#2a8fc4]/25 hover:bg-[#2a8fc4]/5"
+                              >
+                                <MapPin className="h-3 w-3" /> OpenStreetMap
+                              </a>
+                            </div>
+                            <div className="rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                              <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Coordenadas</dt>
+                              <dd className="mt-0.5 select-all font-mono text-sm text-white/80">
+                                {photoExif.latitude},{photoExif.longitude}
+                              </dd>
+                            </div>
+                            {photoExif.altitude !== undefined && (
+                              <div className="flex flex-col rounded-lg border border-[#2a8fc4]/6 bg-[#2a8fc4]/3 p-2.5">
+                                <dt className="text-[9px] font-medium uppercase tracking-wider text-[#5ab8e0]/40">Altitude</dt>
+                                <dd className="mt-0.5 font-mono text-sm text-white/80">{photoExif.altitude}m</dd>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-sm text-[#5ab8e0]/60">Nenhum dado GPS encontrado nesta imagem.</p>
+                            {Object.keys(photoExif).length > 0 && (
+                              <details className="text-xs text-white/50">
+                                <summary className="cursor-pointer text-[#5ab8e0]/40 hover:text-[#5ab8e0]/60">Outros metadados encontrados</summary>
+                                <pre className="mt-1 max-h-40 overflow-auto rounded border border-[#2a8fc4]/8 bg-[#0a0f18] p-2 font-mono text-[10px] text-white/40">
+                                  {JSON.stringify(photoExif, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           {/* Pix decoder panel */}
           {activeTool === "pix" && (

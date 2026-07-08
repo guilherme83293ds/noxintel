@@ -1809,6 +1809,16 @@ async function toolSocial(handle: string): Promise<OsintResult> {
   };
 }
 
+const MYLNIKOV_KEY = process.env.MYLNIKOV_API_KEY || "";
+const MYLNIKOV_ID = process.env.MYLNIKOV_API_ID || "";
+
+function mylnikovUrl(params: Record<string, string>): string {
+  const base = "https://api.mylnikov.org/geolocation/wifi?v=1.1&data=open";
+  const query = new URLSearchParams(params);
+  if (MYLNIKOV_KEY) query.set("key", MYLNIKOV_KEY);
+  return `${base}&${query.toString()}`;
+}
+
 async function toolWifi(query: string): Promise<OsintResult> {
   const q = query.trim();
   const sections: Section[] = [];
@@ -1824,7 +1834,7 @@ async function toolWifi(query: string): Promise<OsintResult> {
 
     // 1. Mylnikov API
     try {
-      const mylnikovRes = await fetch(`https://api.mylnikov.org/geolocation/wifi?v=1.1&data=open&bssid=${encodeURIComponent(formattedBssid)}`, {
+      const mylnikovRes = await fetch(mylnikovUrl({ bssid: formattedBssid }), {
         signal: AbortSignal.timeout(6000)
       });
       if (mylnikovRes.ok) {
@@ -1900,8 +1910,38 @@ async function toolWifi(query: string): Promise<OsintResult> {
       ]
     });
   } else {
-    // SSID Search (Query WiGLE directly if credentials exist)
+    // SSID Search (Query both Mylnikov and WiGLE)
     let ssidFound = false;
+
+    // 1. Mylnikov API — also supports SSID lookup with key
+    try {
+      const mylnikovRes = await fetch(mylnikovUrl({ ssid: q }), {
+        signal: AbortSignal.timeout(6000)
+      });
+      if (mylnikovRes.ok) {
+        const mylnikovData = await mylnikovRes.json() as any;
+        if (mylnikovData.desc === "OK" && mylnikovData.data) {
+          ssidFound = true;
+          sections.push({
+            title: `Mylnikov: ${q}`,
+            fields: [
+              { label: "SSID", value: q },
+              { label: "Latitude", value: String(mylnikovData.data.lat), mono: true },
+              { label: "Longitude", value: String(mylnikovData.data.lon), mono: true },
+              { label: "Precisão", value: `${mylnikovData.data.range}m`, mono: true }
+            ],
+            links: [
+              { label: "Ver no Google Maps", url: `https://www.google.com/maps?q=${mylnikovData.data.lat},${mylnikovData.data.lon}` }
+            ]
+          });
+          sources.push("Mylnikov API (api.mylnikov.org)");
+        }
+      }
+    } catch (err) {
+      console.error("Mylnikov SSID search error:", err);
+    }
+
+    // 2. WiGLE API
     const wigleName = process.env.WIGLE_API_NAME;
     const wigleToken = process.env.WIGLE_API_TOKEN;
     if (wigleName && wigleToken) {
@@ -1915,7 +1955,6 @@ async function toolWifi(query: string): Promise<OsintResult> {
           const wigleData = await wigleRes.json() as any;
           if (wigleData.success && wigleData.results && wigleData.results.length > 0) {
             ssidFound = true;
-            // Show up to 10 network matches for the SSID
             const matches = wigleData.results.slice(0, 10);
             matches.forEach((net: any, idx: number) => {
               sections.push({
@@ -1947,10 +1986,11 @@ async function toolWifi(query: string): Promise<OsintResult> {
         title: "Busca por SSID / Nome de Rede",
         fields: [
           { label: "SSID", value: q },
-          { label: "Nota", value: "Nenhum resultado retornado no WiGLE em tempo real. Tente buscar externamente." }
+          { label: "Nota", value: "Nenhum resultado retornado nas bases gratuitas. Tente buscar externamente." }
         ],
         links: [
-          { label: "Buscar SSID no WiGLE", url: `https://wigle.net/search?query=true&ssid=${encodeURIComponent(q)}` }
+          { label: "Buscar SSID no WiGLE", url: `https://wigle.net/search?query=true&ssid=${encodeURIComponent(q)}` },
+          { label: "Buscar no WiGLE Web", url: `https://wigle.net/search?type=ssid&value=${encodeURIComponent(q)}` }
         ]
       });
     }
